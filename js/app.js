@@ -251,13 +251,17 @@ function renderTabsForRole(role) {
 
 function renderTabContent(tabId) {
   const content = document.getElementById("main-content");
-  // Placeholder shells — each will be built out with real data binding next
+
+  if (tabId === "admin") {
+    renderAdminPanel(content);
+    return;
+  }
+
   const labels = {
     "pre-event": "Pre-Event Task List",
     "during-event": "During-Event Task List",
     "closing": "Closing Task List",
-    "out-of-order": currentUser.role === "maintenance" ? "Flagged Units" : "Out-of-Order Reports",
-    "admin": "Admin Panel"
+    "out-of-order": currentUser.role === "maintenance" ? "Flagged Units" : "Out-of-Order Reports"
   };
   content.innerHTML = `
     <div class="panel-placeholder">
@@ -265,4 +269,145 @@ function renderTabContent(tabId) {
       <p>This section is scaffolded and ready for data binding — coming in the next build pass.</p>
     </div>
   `;
+}
+
+// ===================== ADMIN PANEL: UNITS CSV IMPORT =====================
+function renderAdminPanel(content) {
+  const isSuperadmin = currentUser.role === "superadmin";
+  const siteOptions = isSuperadmin
+    ? Object.entries(SITES).map(([key, label]) => `<option value="${key}">${label}</option>`).join("")
+    : `<option value="${currentUser.site}">${SITES[currentUser.site]}</option>`;
+
+  content.innerHTML = `
+    <div class="card">
+      <h3 style="color:var(--navy); margin-bottom:14px;">Import Privy Units (CSV)</h3>
+      <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">
+        CSV columns required: <code>unit_name, location, type</code> (type must be Male, Female, or ADA).
+        Importing <strong>replaces all units</strong> for the selected site — existing units for that site will be overwritten.
+      </p>
+      <label style="display:block; font-size:0.85rem; margin-bottom:6px; color:var(--muted);">Site</label>
+      <select id="admin-site-select" style="padding:8px; border-radius:6px; border:1px solid var(--border); margin-bottom:14px; width:200px;">
+        ${siteOptions}
+      </select>
+      <br>
+      <input type="file" id="csv-file-input" accept=".csv" style="margin-bottom:14px;">
+      <br>
+      <button id="csv-import-btn" style="padding:10px 18px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer;">
+        Import CSV
+      </button>
+      <div id="csv-import-status" style="margin-top:12px; font-size:0.85rem;"></div>
+    </div>
+    <div class="card">
+      <h3 style="color:var(--navy); margin-bottom:14px;">Current Units — <span id="units-table-site-label"></span></h3>
+      <div id="units-table-container">
+        <p style="color:var(--muted);">Select a site above to view its units.</p>
+      </div>
+    </div>
+  `;
+
+  const siteSelect = document.getElementById("admin-site-select");
+  siteSelect.addEventListener("change", () => loadUnitsTable(siteSelect.value));
+  loadUnitsTable(siteSelect.value);
+
+  document.getElementById("csv-import-btn").addEventListener("click", () => {
+    const fileInput = document.getElementById("csv-file-input");
+    const site = siteSelect.value;
+    const statusEl = document.getElementById("csv-import-status");
+
+    if (!fileInput.files.length) {
+      statusEl.style.color = "var(--danger)";
+      statusEl.textContent = "Choose a CSV file first.";
+      return;
+    }
+
+    const file = fileInput.files[0];
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: (results) => {
+        const rows = results.data;
+        const errors = [];
+        const units = {};
+
+        rows.forEach((row, i) => {
+          const name = (row.unit_name || "").trim();
+          const location = (row.location || "").trim();
+          const type = (row.type || "").trim();
+
+          if (!name) { errors.push(`Row ${i + 2}: missing unit_name`); return; }
+          if (!["Male", "Female", "ADA"].includes(type)) {
+            errors.push(`Row ${i + 2}: type "${type}" must be Male, Female, or ADA`);
+            return;
+          }
+
+          const unitKey = name.replace(/[.#$/\[\]]/g, "_");
+          units[unitKey] = { name, location, type, status: "ok" };
+        });
+
+        if (errors.length) {
+          statusEl.style.color = "var(--danger)";
+          statusEl.innerHTML = `Found ${errors.length} problem(s), nothing was imported:<br>` + errors.join("<br>");
+          return;
+        }
+
+        const unitCount = Object.keys(units).length;
+        if (!confirm(`Import ${unitCount} units for ${SITES[site]}? This replaces all existing units for this site.`)) {
+          statusEl.textContent = "Import cancelled.";
+          return;
+        }
+
+        db.ref(`sites/${site}/units`).set(units)
+          .then(() => {
+            statusEl.style.color = "var(--success)";
+            statusEl.textContent = `Imported ${unitCount} units for ${SITES[site]}.`;
+            fileInput.value = "";
+            loadUnitsTable(site);
+          })
+          .catch((err) => {
+            statusEl.style.color = "var(--danger)";
+            statusEl.textContent = "Import failed: " + err.message;
+          });
+      },
+      error: (err) => {
+        statusEl.style.color = "var(--danger)";
+        statusEl.textContent = "Could not parse CSV: " + err.message;
+      }
+    });
+  });
+}
+
+function loadUnitsTable(site) {
+  document.getElementById("units-table-site-label").textContent = SITES[site] || site;
+  const container = document.getElementById("units-table-container");
+  container.innerHTML = "<p style='color:var(--muted);'>Loading...</p>";
+
+  db.ref(`sites/${site}/units`).once("value").then((snap) => {
+    if (!snap.exists()) {
+      container.innerHTML = "<p style='color:var(--muted);'>No units imported yet for this site.</p>";
+      return;
+    }
+    const units = snap.val();
+    const rows = Object.values(units).map(u =>
+      `<tr>
+        <td style="padding:8px; border-bottom:1px solid var(--border);">${u.name}</td>
+        <td style="padding:8px; border-bottom:1px solid var(--border);">${u.location || "—"}</td>
+        <td style="padding:8px; border-bottom:1px solid var(--border);">${u.type}</td>
+        <td style="padding:8px; border-bottom:1px solid var(--border);">${u.status}</td>
+      </tr>`
+    ).join("");
+
+    container.innerHTML = `
+      <table style="width:100%; border-collapse:collapse; font-size:0.85rem;">
+        <thead>
+          <tr style="text-align:left; color:var(--muted);">
+            <th style="padding:8px; border-bottom:2px solid var(--border);">Unit</th>
+            <th style="padding:8px; border-bottom:2px solid var(--border);">Location</th>
+            <th style="padding:8px; border-bottom:2px solid var(--border);">Type</th>
+            <th style="padding:8px; border-bottom:2px solid var(--border);">Status</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `;
+  });
 }
