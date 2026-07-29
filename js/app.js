@@ -279,6 +279,26 @@ function renderTabContent(tabId) {
     return;
   }
 
+  if (tabId === "pre-event") {
+    if (currentUser.role === "superadmin" || currentUser.role === "superuser") {
+      renderInventoryItemsAdmin(content);
+    } else {
+      content.innerHTML = `<div class="panel-placeholder"><h3 style="margin-bottom:8px;color:var(--navy)">Pre-Event Task List</h3><p>Checklist tasks coming in a future build pass.</p></div>`;
+    }
+    return;
+  }
+
+  if (tabId === "closing") {
+    if (currentUser.role === "user") {
+      renderClosingInventoryCount(content);
+    } else if (currentUser.role === "superadmin" || currentUser.role === "superuser") {
+      renderInventoryCountHistory(content);
+    } else {
+      content.innerHTML = `<div class="panel-placeholder"><h3 style="margin-bottom:8px;color:var(--navy)">Closing Task List</h3><p>Checklist tasks coming in a future build pass.</p></div>`;
+    }
+    return;
+  }
+
   const labels = {
     "pre-event": "Pre-Event Task List",
     "during-event": "During-Event Task List",
@@ -520,6 +540,223 @@ function renderMaintenanceQueue(content) {
         .catch((err) => alert("Failed to update: " + err.message));
       });
     });
+  });
+}
+
+// ===================== PRE-EVENT: INVENTORY ITEMS ADMIN (Superadmin/Super User) =====================
+const SUGGESTED_INVENTORY_ITEMS = [
+  "Toilet Paper", "Paper Towels", "Hand Soap", "Hand Sanitizer", "Trash Bags",
+  "Toilet Seat Covers", "Air Freshener", "Disinfectant Spray", "Gloves", "Urinal Screens"
+];
+
+function renderInventoryItemsAdmin(content) {
+  const topSelector = document.getElementById("site-selector");
+  const site = currentUser.role === "superadmin" ? topSelector.value : currentUser.site;
+
+  if (currentUser.role === "superadmin" && site === "all") {
+    content.innerHTML = `<div class="panel-placeholder">Pick a specific site above to manage its inventory items — items are set up per site.</div>`;
+    return;
+  }
+
+  content.innerHTML = `<div class="card"><p style="color:var(--muted);">Loading inventory items...</p></div>`;
+
+  db.ref(`sites/${site}/inventoryItems`).once("value").then((snap) => {
+    const items = snap.exists() ? snap.val() : {};
+    const rows = Object.entries(items).map(([key, item]) => `
+      <tr>
+        <td style="padding:8px; border-bottom:1px solid var(--border);">${item.name}</td>
+        <td style="padding:8px; border-bottom:1px solid var(--border);">${item.parLevel}</td>
+        <td style="padding:8px; border-bottom:1px solid var(--border);">
+          <button class="delete-item-btn" data-key="${key}" style="padding:4px 10px; background:none; border:1px solid var(--danger); color:var(--danger); border-radius:4px; cursor:pointer; font-size:0.75rem;">Remove</button>
+        </td>
+      </tr>
+    `).join("");
+
+    const chipButtons = SUGGESTED_INVENTORY_ITEMS.map(name =>
+      `<button class="suggested-chip" data-name="${name}" style="padding:5px 12px; margin:3px; background:#f4f2ee; border:1px solid var(--border); border-radius:14px; cursor:pointer; font-size:0.8rem;">${name}</button>`
+    ).join("");
+
+    content.innerHTML = `
+      <div class="card">
+        <h3 style="color:var(--navy); margin-bottom:14px;">Inventory Items — ${SITES[site]}</h3>
+        <p style="color:var(--muted); font-size:0.85rem; margin-bottom:10px;">
+          Par level is the target stock in cases (e.g. 2.5 = two and a half cases). Attendants will record actual case counts against this list during Closing.
+        </p>
+        <p style="color:var(--muted); font-size:0.8rem; margin-bottom:6px;">Quick-add suggestions:</p>
+        <div style="margin-bottom:16px;">${chipButtons}</div>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:16px;">
+          <input type="text" id="new-item-name" placeholder="Item name" style="flex:2; min-width:160px; padding:8px; border:1px solid var(--border); border-radius:6px;">
+          <input type="number" id="new-item-par" placeholder="Par level (cases)" step="0.25" min="0" style="flex:1; min-width:140px; padding:8px; border:1px solid var(--border); border-radius:6px;">
+          <button id="add-item-btn" style="padding:8px 16px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer;">Add Item</button>
+        </div>
+        <div id="item-add-status" style="font-size:0.85rem; margin-bottom:14px;"></div>
+        <table style="width:100%; border-collapse:collapse; font-size:0.85rem;">
+          <thead>
+            <tr style="text-align:left; color:var(--muted);">
+              <th style="padding:8px; border-bottom:2px solid var(--border);">Item</th>
+              <th style="padding:8px; border-bottom:2px solid var(--border);">Par Level (cases)</th>
+              <th style="padding:8px; border-bottom:2px solid var(--border);"></th>
+            </tr>
+          </thead>
+          <tbody>${rows || `<tr><td colspan="3" style="padding:8px; color:var(--muted);">No items yet — add some above.</td></tr>`}</tbody>
+        </table>
+      </div>
+    `;
+
+    function addItem(name, parLevel) {
+      const statusEl = document.getElementById("item-add-status");
+      if (!name.trim()) {
+        statusEl.style.color = "var(--danger)";
+        statusEl.textContent = "Item name is required.";
+        return;
+      }
+      const key = name.trim().replace(/[.#$/\[\]]/g, "_");
+      db.ref(`sites/${site}/inventoryItems/${key}`).set({ name: name.trim(), parLevel: parseFloat(parLevel) || 0 })
+        .then(() => renderInventoryItemsAdmin(content))
+        .catch((err) => {
+          statusEl.style.color = "var(--danger)";
+          statusEl.textContent = "Failed to add: " + err.message;
+        });
+    }
+
+    document.getElementById("add-item-btn").addEventListener("click", () => {
+      addItem(document.getElementById("new-item-name").value, document.getElementById("new-item-par").value);
+    });
+
+    content.querySelectorAll(".suggested-chip").forEach((chip) => {
+      chip.addEventListener("click", () => addItem(chip.dataset.name, 1));
+    });
+
+    content.querySelectorAll(".delete-item-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        if (!confirm("Remove this item from the inventory list?")) return;
+        db.ref(`sites/${site}/inventoryItems/${btn.dataset.key}`).remove()
+          .then(() => renderInventoryItemsAdmin(content))
+          .catch((err) => alert("Failed to remove: " + err.message));
+      });
+    });
+  });
+}
+
+// ===================== CLOSING: INVENTORY COUNT ENTRY (User) =====================
+function renderClosingInventoryCount(content) {
+  const site = currentUser.site;
+  content.innerHTML = `<div class="card"><p style="color:var(--muted);">Loading inventory items...</p></div>`;
+
+  db.ref(`sites/${site}/inventoryItems`).once("value").then((snap) => {
+    if (!snap.exists()) {
+      content.innerHTML = `<div class="panel-placeholder">No inventory items set up for ${SITES[site]} yet. Ask your Super User to add items in the Pre-Event tab.</div>`;
+      return;
+    }
+    const items = snap.val();
+    const rows = Object.entries(items).map(([key, item]) => `
+      <div style="display:flex; align-items:center; justify-content:space-between; padding:10px 0; border-bottom:1px solid var(--border);">
+        <div>
+          <div style="font-weight:600;">${item.name}</div>
+          <div style="color:var(--muted); font-size:0.75rem;">Par level: ${item.parLevel} cases</div>
+        </div>
+        <input type="number" class="count-input" data-key="${key}" data-name="${item.name}" step="0.25" min="0" placeholder="0.00"
+          style="width:100px; padding:8px; border:1px solid var(--border); border-radius:6px; text-align:right;">
+      </div>
+    `).join("");
+
+    content.innerHTML = `
+      <div class="card">
+        <h3 style="color:var(--navy); margin-bottom:8px;">Closing Inventory Count — ${SITES[site]}</h3>
+        <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">Enter case count for each item (in quarter-case increments, e.g. .25, .50, .75, 1.00, 1.25...).</p>
+        ${rows}
+        <button id="submit-count-btn" style="margin-top:16px; padding:10px 20px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer;">
+          Submit Inventory Count
+        </button>
+        <div id="count-submit-status" style="margin-top:12px; font-size:0.85rem;"></div>
+      </div>
+    `;
+
+    document.getElementById("submit-count-btn").addEventListener("click", () => {
+      const statusEl = document.getElementById("count-submit-status");
+      const counts = {};
+      let hasAny = false;
+      content.querySelectorAll(".count-input").forEach((input) => {
+        const val = input.value.trim();
+        if (val !== "") {
+          counts[input.dataset.key] = { name: input.dataset.name, count: parseFloat(val) };
+          hasAny = true;
+        }
+      });
+
+      if (!hasAny) {
+        statusEl.style.color = "var(--danger)";
+        statusEl.textContent = "Enter at least one count before submitting.";
+        return;
+      }
+
+      db.ref(`sites/${site}/inventoryCounts`).push({
+        countedByUid: currentUser.uid,
+        countedByName: `${currentUser.firstName} ${currentUser.lastName}`,
+        timestamp: firebase.database.ServerValue.TIMESTAMP,
+        counts
+      }).then(() => {
+        statusEl.style.color = "var(--success)";
+        statusEl.textContent = "Inventory count submitted.";
+      }).catch((err) => {
+        statusEl.style.color = "var(--danger)";
+        statusEl.textContent = "Failed to submit: " + err.message;
+      });
+    });
+  });
+}
+
+// ===================== CLOSING: INVENTORY COUNT HISTORY (Superadmin/Super User) =====================
+function renderInventoryCountHistory(content) {
+  const topSelector = document.getElementById("site-selector");
+  const site = currentUser.role === "superadmin" ? topSelector.value : currentUser.site;
+
+  if (currentUser.role === "superadmin" && site === "all") {
+    content.innerHTML = `<div class="panel-placeholder">Pick a specific site above to view its inventory count history.</div>`;
+    return;
+  }
+
+  content.innerHTML = `<div class="card"><p style="color:var(--muted);">Loading count history...</p></div>`;
+
+  Promise.all([
+    db.ref(`sites/${site}/inventoryItems`).once("value"),
+    db.ref(`sites/${site}/inventoryCounts`).limitToLast(10).once("value")
+  ]).then(([itemsSnap, countsSnap]) => {
+    const parLevels = {};
+    if (itemsSnap.exists()) {
+      Object.entries(itemsSnap.val()).forEach(([key, item]) => { parLevels[key] = item.parLevel; });
+    }
+
+    if (!countsSnap.exists()) {
+      content.innerHTML = `<div class="panel-placeholder">No inventory counts submitted yet for ${SITES[site]}.</div>`;
+      return;
+    }
+
+    const entries = [];
+    countsSnap.forEach((child) => entries.push(child.val()));
+    entries.reverse();
+
+    const cardsHtml = entries.map(entry => {
+      const when = entry.timestamp ? new Date(entry.timestamp).toLocaleString() : "—";
+      const itemRows = Object.entries(entry.counts || {}).map(([key, c]) => {
+        const par = parLevels[key];
+        const belowPar = par !== undefined && c.count < par;
+        return `<div style="display:flex; justify-content:space-between; padding:4px 0; font-size:0.85rem;">
+          <span>${c.name}</span>
+          <span style="${belowPar ? "color:var(--danger); font-weight:600;" : ""}">${c.count}${par !== undefined ? ` / ${par} par` : ""}</span>
+        </div>`;
+      }).join("");
+
+      return `
+        <div class="card" style="margin-bottom:10px;">
+          <div style="font-weight:600; margin-bottom:4px;">${entry.countedByName}</div>
+          <div style="color:var(--muted); font-size:0.75rem; margin-bottom:10px;">${when}</div>
+          ${itemRows}
+        </div>
+      `;
+    }).join("");
+
+    content.innerHTML = `<h3 style="color:var(--navy); margin-bottom:14px;">Inventory Count History — ${SITES[site]}</h3>` + cardsHtml;
   });
 }
 
