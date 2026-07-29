@@ -30,7 +30,8 @@ const ROLES = {
   superuser: { label: "Super User", scope: "site" },
   user: { label: "User", scope: "site" },
   maintenance: { label: "Maintenance", scope: "site" },
-  preevent: { label: "Pre-Event", scope: "site" }
+  preevent: { label: "Pre-Event", scope: "site" },
+  executive: { label: "Executive", scope: "all" }
 };
 
 // Default suggested out-of-order reasons (editable by Superadmin in Admin Panel later)
@@ -241,6 +242,10 @@ function renderTabsForRole(role) {
     tabs = [
       { id: "pre-event", label: "Pre-Event" }
     ];
+  } else if (role === "executive") {
+    tabs = [
+      { id: "reports", label: "Reports" }
+    ];
   }
 
   tabs.forEach((tab, i) => {
@@ -277,7 +282,8 @@ function renderTabContent(tabId) {
   const labels = {
     "pre-event": "Pre-Event Task List",
     "during-event": "During-Event Task List",
-    "closing": "Closing Task List"
+    "closing": "Closing Task List",
+    "reports": "Reports"
   };
   content.innerHTML = `
     <div class="panel-placeholder">
@@ -591,7 +597,7 @@ function renderAdminPanel(content) {
           <label style="display:block; font-size:0.8rem; color:var(--muted); margin-bottom:4px;">Role</label>
           <select id="add-staff-role" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px;">
             ${isSuperadmin
-              ? `<option value="superadmin">Superadmin</option><option value="superuser">Super User</option><option value="user" selected>User</option><option value="maintenance">Maintenance</option><option value="preevent">Pre-Event</option>`
+              ? `<option value="superadmin">Superadmin</option><option value="superuser">Super User</option><option value="user" selected>User</option><option value="maintenance">Maintenance</option><option value="preevent">Pre-Event</option><option value="executive">Executive</option>`
               : `<option value="user" selected>User</option><option value="maintenance">Maintenance</option><option value="preevent">Pre-Event</option>`}
           </select>
         </div>
@@ -623,7 +629,7 @@ function renderAdminPanel(content) {
       <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">
         CSV columns required: <code>first_name, last_name, email, phone, role, site, pin</code>.
         Phone is optional at import — but anyone without a phone on file can't use "Forgot PIN?" text reset until one is added (editable below in the staff list).
-        Role must be superadmin / superuser / user / maintenance / preevent. Site can be blank for superadmin (defaults to "all").
+        Role must be superadmin / superuser / user / maintenance / preevent / executive. Site can be blank for superadmin or executive (defaults to "all").
         Leave <code>pin</code> blank to auto-generate a unique 4-digit PIN. This <strong>adds</strong> new staff — it does not remove existing users.
       </p>
       <button id="staff-template-btn" style="padding:8px 14px; background:none; border:1px solid var(--navy); color:var(--navy); border-radius:6px; cursor:pointer; margin-bottom:14px;">
@@ -658,7 +664,7 @@ function renderAdminPanel(content) {
 
   if (isSuperadmin) {
     addRoleSelect.addEventListener("change", () => {
-      if (addRoleSelect.value === "superadmin") {
+      if (addRoleSelect.value === "superadmin" || addRoleSelect.value === "executive") {
         addSiteSelect.value = "all";
         addSiteSelect.disabled = true;
       } else {
@@ -674,7 +680,7 @@ function renderAdminPanel(content) {
     const email = document.getElementById("add-staff-email").value.trim();
     const phone = document.getElementById("add-staff-phone").value.trim();
     const role = addRoleSelect.value;
-    const site = role === "superadmin" ? "all" : addSiteSelect.value;
+    const site = (role === "superadmin" || role === "executive") ? "all" : addSiteSelect.value;
 
     if (!firstName || !lastName) {
       statusEl.style.color = "var(--danger)";
@@ -818,7 +824,7 @@ function renderAdminPanel(content) {
   document.getElementById("staff-import-btn").addEventListener("click", () => {
     const fileInput = document.getElementById("staff-csv-input");
     const statusEl = document.getElementById("staff-import-status");
-    const VALID_ROLES = ["superadmin", "superuser", "user", "maintenance", "preevent"];
+    const VALID_ROLES = ["superadmin", "superuser", "user", "maintenance", "preevent", "executive"];
 
     if (!fileInput.files.length) {
       statusEl.style.color = "var(--danger)";
@@ -864,8 +870,8 @@ function renderAdminPanel(content) {
             let pin = (row.pin || "").trim();
 
             if (!firstName || !lastName) { errors.push(`Row ${i + 2}: missing first/last name`); return; }
-            if (!VALID_ROLES.includes(role)) { errors.push(`Row ${i + 2}: role "${role}" must be superadmin, superuser, user, maintenance, or preevent`); return; }
-            if (role === "superadmin") {
+            if (!VALID_ROLES.includes(role)) { errors.push(`Row ${i + 2}: role "${role}" must be superadmin, superuser, user, maintenance, preevent, or executive`); return; }
+            if (role === "superadmin" || role === "executive") {
               site = "all";
             } else if (!Object.keys(SITES).includes(site)) {
               errors.push(`Row ${i + 2}: site "${site}" must be parf, srf, krf, or garf`);
@@ -995,7 +1001,7 @@ function loadStaffTable(site) {
     const relevantUsers = [];
     snap.forEach((child) => {
       const u = child.val();
-      if (u.site === site || u.role === "superadmin") {
+      if (u.site === site || ((u.role === "superadmin" || u.role === "executive") && currentUser.role === "superadmin")) {
         relevantUsers.push({ uid: child.key, ...u });
       }
     });
