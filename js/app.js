@@ -307,6 +307,24 @@ function renderAdminPanel(content) {
         <p style="color:var(--muted);">Select a site above to view its units.</p>
       </div>
     </div>
+    <div class="card">
+      <h3 style="color:var(--navy); margin-bottom:14px;">Import Staff (CSV)</h3>
+      <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">
+        CSV columns required: <code>first_name, last_name, email, phone, role, site, pin</code>.
+        Role must be superadmin / superuser / user / maintenance. Site can be blank for superadmin (defaults to "all").
+        Leave <code>pin</code> blank to auto-generate a unique 4-digit PIN. This <strong>adds</strong> new staff — it does not remove existing users.
+      </p>
+      <button id="staff-template-btn" style="padding:8px 14px; background:none; border:1px solid var(--navy); color:var(--navy); border-radius:6px; cursor:pointer; margin-bottom:14px;">
+        Download staff template
+      </button>
+      <br>
+      <input type="file" id="staff-csv-input" accept=".csv" style="margin-bottom:14px;">
+      <br>
+      <button id="staff-import-btn" style="padding:10px 18px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer;">
+        Import Staff CSV
+      </button>
+      <div id="staff-import-status" style="margin-top:12px; font-size:0.85rem;"></div>
+    </div>
   `;
 
   const siteSelect = document.getElementById("admin-site-select");
@@ -398,6 +416,122 @@ function renderAdminPanel(content) {
         statusEl.style.color = "var(--danger)";
         statusEl.textContent = "Could not parse CSV: " + err.message;
       }
+    });
+  });
+
+  // ---------- Staff import ----------
+  document.getElementById("staff-template-btn").addEventListener("click", () => {
+    const csvContent = "first_name,last_name,email,phone,role,site,pin\nJane,Smith,jane.smith@example.com,7175551001,superuser,parf,\nJohn,Doe,john.doe@example.com,7175551002,user,parf,\n";
+    const blob = new Blob([csvContent], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "privy-check-staff-template.csv";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  });
+
+  document.getElementById("staff-import-btn").addEventListener("click", () => {
+    const fileInput = document.getElementById("staff-csv-input");
+    const statusEl = document.getElementById("staff-import-status");
+    const VALID_ROLES = ["superadmin", "superuser", "user", "maintenance"];
+
+    if (!fileInput.files.length) {
+      statusEl.style.color = "var(--danger)";
+      statusEl.textContent = "Choose a CSV file first.";
+      return;
+    }
+
+    statusEl.style.color = "var(--muted)";
+    statusEl.textContent = "Checking existing PINs...";
+
+    db.ref("users").once("value").then((existingSnap) => {
+      const usedPins = new Set();
+      existingSnap.forEach((child) => {
+        if (child.val().pin) usedPins.add(child.val().pin);
+      });
+
+      function generateUniquePin() {
+        let candidate, attempts = 0;
+        do {
+          candidate = String(Math.floor(1000 + Math.random() * 9000));
+          attempts++;
+        } while (usedPins.has(candidate) && attempts < 100);
+        usedPins.add(candidate);
+        return candidate;
+      }
+
+      const file = fileInput.files[0];
+      Papa.parse(file, {
+        header: true,
+        skipEmptyLines: true,
+        complete: (results) => {
+          const rows = results.data;
+          const errors = [];
+          const newUsers = {};
+
+          rows.forEach((row, i) => {
+            const firstName = (row.first_name || "").trim();
+            const lastName = (row.last_name || "").trim();
+            const email = (row.email || "").trim();
+            const phone = (row.phone || "").trim();
+            const role = (row.role || "").trim().toLowerCase();
+            let site = (row.site || "").trim().toLowerCase();
+            let pin = (row.pin || "").trim();
+
+            if (!firstName || !lastName) { errors.push(`Row ${i + 2}: missing first/last name`); return; }
+            if (!VALID_ROLES.includes(role)) { errors.push(`Row ${i + 2}: role "${role}" must be superadmin, superuser, user, or maintenance`); return; }
+            if (role === "superadmin") {
+              site = "all";
+            } else if (!Object.keys(SITES).includes(site)) {
+              errors.push(`Row ${i + 2}: site "${site}" must be parf, srf, krf, or garf`);
+              return;
+            }
+            if (!phone) { errors.push(`Row ${i + 2}: phone is required (needed for PIN reset)`); return; }
+
+            if (pin) {
+              if (usedPins.has(pin)) { errors.push(`Row ${i + 2}: PIN "${pin}" is already in use`); return; }
+              usedPins.add(pin);
+            } else {
+              pin = generateUniquePin();
+            }
+
+            const uidKey = `staff_${Date.now()}_${i}`;
+            newUsers[uidKey] = { firstName, lastName, email, phone, role, site, pin, active: true };
+          });
+
+          if (errors.length) {
+            statusEl.style.color = "var(--danger)";
+            statusEl.innerHTML = `Found ${errors.length} problem(s), nothing was imported:<br>` + errors.join("<br>");
+            return;
+          }
+
+          const updates = {};
+          Object.entries(newUsers).forEach(([uid, data]) => {
+            updates[`users/${uid}`] = data;
+          });
+
+          db.ref().update(updates)
+            .then(() => {
+              const summary = Object.entries(newUsers)
+                .map(([, u]) => `${u.firstName} ${u.lastName} — PIN ${u.pin} (${u.role}${u.site !== "all" ? ", " + SITES[u.site] : ""})`)
+                .join("<br>");
+              statusEl.style.color = "var(--success)";
+              statusEl.innerHTML = `Imported ${Object.keys(newUsers).length} staff member(s):<br>${summary}`;
+              fileInput.value = "";
+            })
+            .catch((err) => {
+              statusEl.style.color = "var(--danger)";
+              statusEl.textContent = "Import failed: " + err.message;
+            });
+        },
+        error: (err) => {
+          statusEl.style.color = "var(--danger)";
+          statusEl.textContent = "Could not parse CSV: " + err.message;
+        }
+      });
     });
   });
 }
