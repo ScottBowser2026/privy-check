@@ -932,6 +932,9 @@ function setupSandboxModeToggle() {
     toggle.checked = isOn;
     label.textContent = isOn ? "ON — no real texts are being sent" : "OFF — texts send normally";
     label.style.color = isOn ? "var(--warn)" : "var(--success)";
+  }).catch((err) => {
+    label.textContent = "Error loading: " + err.message + " (check database rules include 'settings')";
+    label.style.color = "var(--danger)";
   });
 
   toggle.addEventListener("change", () => {
@@ -953,8 +956,7 @@ function loadSmsLog() {
     if (!snap.exists()) {
       container.innerHTML = "<p style='color:var(--muted); font-size:0.85rem;'>No SMS activity logged yet.</p>";
       return;
-    }
-    const entries = [];
+    }    const entries = [];
     snap.forEach((child) => entries.push(child.val()));
     entries.reverse();
 
@@ -984,6 +986,8 @@ function loadSmsLog() {
         <tbody>${rows}</tbody>
       </table>
     `;
+  }).catch((err) => {
+    container.innerHTML = `<p style='color:var(--danger); font-size:0.85rem;'>Error loading: ${err.message} (check database rules include 'smsLog')</p>`;
   });
 }
 
