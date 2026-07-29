@@ -573,18 +573,29 @@ function loadStaffTable(site) {
       return;
     }
 
+    const isSuperadminViewer = currentUser.role === "superadmin";
+
     const rows = relevantUsers.map(u => {
       const modCell = u.role === "superuser"
         ? `<input type="checkbox" class="mod-toggle" data-uid="${u.uid}" ${u.isMOD ? "checked" : ""} style="width:18px; height:18px; cursor:pointer;">`
         : `<span style="color:var(--border);">—</span>`;
+      const pinCell = isSuperadminViewer
+        ? `<input type="text" class="pin-edit" data-uid="${u.uid}" value="${u.pin || ""}" maxlength="4" style="width:60px; padding:4px; border:1px solid var(--border); border-radius:4px;">
+           <button class="pin-save-btn" data-uid="${u.uid}" style="padding:4px 8px; font-size:0.75rem; background:var(--navy); color:white; border:none; border-radius:4px; cursor:pointer; margin-left:4px;">Save</button>`
+        : "";
       return `<tr>
         <td style="padding:8px; border-bottom:1px solid var(--border);">${u.firstName} ${u.lastName}</td>
         <td style="padding:8px; border-bottom:1px solid var(--border);">${ROLES[u.role] ? ROLES[u.role].label : u.role}</td>
         <td style="padding:8px; border-bottom:1px solid var(--border);">${u.phone || "—"}</td>
         <td style="padding:8px; border-bottom:1px solid var(--border); text-align:center;">${modCell}</td>
         <td style="padding:8px; border-bottom:1px solid var(--border);">${u.active === false ? "Inactive" : "Active"}</td>
+        ${isSuperadminViewer ? `<td style="padding:8px; border-bottom:1px solid var(--border); white-space:nowrap;">${pinCell}</td>` : ""}
       </tr>`;
     }).join("");
+
+    const pinHeader = isSuperadminViewer
+      ? `<th style="padding:8px; border-bottom:2px solid var(--border);">PIN</th>`
+      : "";
 
     container.innerHTML = `
       <table style="width:100%; border-collapse:collapse; font-size:0.85rem;">
@@ -595,6 +606,7 @@ function loadStaffTable(site) {
             <th style="padding:8px; border-bottom:2px solid var(--border);">Phone</th>
             <th style="padding:8px; border-bottom:2px solid var(--border); text-align:center;">MOD</th>
             <th style="padding:8px; border-bottom:2px solid var(--border);">Status</th>
+            ${pinHeader}
           </tr>
         </thead>
         <tbody>${rows}</tbody>
@@ -609,6 +621,33 @@ function loadStaffTable(site) {
             alert("Failed to update MOD status: " + err.message);
             checkbox.checked = !checkbox.checked;
           });
+      });
+    });
+
+    container.querySelectorAll(".pin-save-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const uid = btn.dataset.uid;
+        const input = container.querySelector(`.pin-edit[data-uid="${uid}"]`);
+        const newPin = input.value.trim();
+
+        if (!/^\d{4}$/.test(newPin)) {
+          alert("PIN must be exactly 4 digits.");
+          return;
+        }
+
+        db.ref("users").once("value").then((allUsersSnap) => {
+          let collision = false;
+          allUsersSnap.forEach((child) => {
+            if (child.key !== uid && child.val().pin === newPin) collision = true;
+          });
+          if (collision) {
+            alert(`PIN ${newPin} is already in use by another staff member. Choose a different one.`);
+            return;
+          }
+          db.ref(`users/${uid}/pin`).set(newPin)
+            .then(() => alert("PIN updated."))
+            .catch((err) => alert("Failed to update PIN: " + err.message));
+        });
       });
     });
   });
