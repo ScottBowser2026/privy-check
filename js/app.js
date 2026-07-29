@@ -569,6 +569,47 @@ function renderAdminPanel(content) {
       </div>
     </div>
     <div class="card">
+      <h3 style="color:var(--navy); margin-bottom:14px;">Add Staff Member</h3>
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-bottom:12px;">
+        <div>
+          <label style="display:block; font-size:0.8rem; color:var(--muted); margin-bottom:4px;">First Name</label>
+          <input type="text" id="add-staff-first" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px;">
+        </div>
+        <div>
+          <label style="display:block; font-size:0.8rem; color:var(--muted); margin-bottom:4px;">Last Name</label>
+          <input type="text" id="add-staff-last" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px;">
+        </div>
+        <div>
+          <label style="display:block; font-size:0.8rem; color:var(--muted); margin-bottom:4px;">Email</label>
+          <input type="email" id="add-staff-email" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px;">
+        </div>
+        <div>
+          <label style="display:block; font-size:0.8rem; color:var(--muted); margin-bottom:4px;">Phone (optional)</label>
+          <input type="tel" id="add-staff-phone" placeholder="717-555-0100" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px;">
+        </div>
+        <div>
+          <label style="display:block; font-size:0.8rem; color:var(--muted); margin-bottom:4px;">Role</label>
+          <select id="add-staff-role" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px;">
+            ${isSuperadmin
+              ? `<option value="superadmin">Superadmin</option><option value="superuser">Super User</option><option value="user" selected>User</option><option value="maintenance">Maintenance</option><option value="preevent">Pre-Event</option>`
+              : `<option value="user" selected>User</option><option value="maintenance">Maintenance</option><option value="preevent">Pre-Event</option>`}
+          </select>
+        </div>
+        <div>
+          <label style="display:block; font-size:0.8rem; color:var(--muted); margin-bottom:4px;">Site</label>
+          <select id="add-staff-site" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px;" ${isSuperadmin ? "" : "disabled"}>
+            ${isSuperadmin
+              ? `<option value="all">All Sites</option>` + Object.entries(SITES).map(([key, label]) => `<option value="${key}">${label}</option>`).join("")
+              : `<option value="${currentUser.site}">${SITES[currentUser.site]}</option>`}
+          </select>
+        </div>
+      </div>
+      <button id="add-staff-btn" style="padding:10px 20px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer;">
+        Add Staff Member
+      </button>
+      <div id="add-staff-status" style="margin-top:12px; font-size:0.85rem;"></div>
+    </div>
+    <div class="card">
       <h3 style="color:var(--navy); margin-bottom:14px;">Staff — <span id="staff-table-site-label"></span></h3>
       <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">
         Toggle "MOD" (Manager/Maintenance on Duty) for Super Users and Maintenance staff who are currently on shift and should receive alerts / be assignable. Multiple people can be MOD at once.
@@ -610,6 +651,67 @@ function renderAdminPanel(content) {
     setupSandboxModeToggle();
     loadSmsLog();
   }
+
+  // ---------- Add Staff Member (single-record quick add) ----------
+  const addRoleSelect = document.getElementById("add-staff-role");
+  const addSiteSelect = document.getElementById("add-staff-site");
+
+  if (isSuperadmin) {
+    addRoleSelect.addEventListener("change", () => {
+      if (addRoleSelect.value === "superadmin") {
+        addSiteSelect.value = "all";
+        addSiteSelect.disabled = true;
+      } else {
+        addSiteSelect.disabled = false;
+      }
+    });
+  }
+
+  document.getElementById("add-staff-btn").addEventListener("click", () => {
+    const statusEl = document.getElementById("add-staff-status");
+    const firstName = document.getElementById("add-staff-first").value.trim();
+    const lastName = document.getElementById("add-staff-last").value.trim();
+    const email = document.getElementById("add-staff-email").value.trim();
+    const phone = document.getElementById("add-staff-phone").value.trim();
+    const role = addRoleSelect.value;
+    const site = role === "superadmin" ? "all" : addSiteSelect.value;
+
+    if (!firstName || !lastName) {
+      statusEl.style.color = "var(--danger)";
+      statusEl.textContent = "First and last name are required.";
+      return;
+    }
+
+    statusEl.style.color = "var(--muted)";
+    statusEl.textContent = "Adding...";
+
+    db.ref("users").once("value").then((usersSnap) => {
+      const usedPins = new Set();
+      usersSnap.forEach((child) => { if (child.val().pin) usedPins.add(child.val().pin); });
+
+      let newPin, attempts = 0;
+      do {
+        newPin = String(Math.floor(1000 + Math.random() * 9000));
+        attempts++;
+      } while (usedPins.has(newPin) && attempts < 100);
+
+      const newUserRef = db.ref("users").push();
+      newUserRef.set({ firstName, lastName, email, phone, role, site, pin: newPin, active: true })
+        .then(() => {
+          statusEl.style.color = "var(--success)";
+          statusEl.textContent = `Added ${firstName} ${lastName} — PIN ${newPin} (${ROLES[role].label}${site !== "all" ? ", " + SITES[site] : ""})`;
+          document.getElementById("add-staff-first").value = "";
+          document.getElementById("add-staff-last").value = "";
+          document.getElementById("add-staff-email").value = "";
+          document.getElementById("add-staff-phone").value = "";
+          loadStaffTable(document.getElementById("admin-site-select").value);
+        })
+        .catch((err) => {
+          statusEl.style.color = "var(--danger)";
+          statusEl.textContent = "Failed to add: " + err.message;
+        });
+    });
+  });
 
   document.getElementById("csv-template-btn").addEventListener("click", () => {
     const site = siteSelect.value;
