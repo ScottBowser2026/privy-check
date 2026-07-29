@@ -576,6 +576,7 @@ function renderAdminPanel(content) {
       <h3 style="color:var(--navy); margin-bottom:14px;">Import Staff (CSV)</h3>
       <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">
         CSV columns required: <code>first_name, last_name, email, phone, role, site, pin</code>.
+        Phone is optional at import — but anyone without a phone on file can't use "Forgot PIN?" text reset until one is added (editable below in the staff list).
         Role must be superadmin / superuser / user / maintenance. Site can be blank for superadmin (defaults to "all").
         Leave <code>pin</code> blank to auto-generate a unique 4-digit PIN. This <strong>adds</strong> new staff — it does not remove existing users.
       </p>
@@ -763,7 +764,6 @@ function renderAdminPanel(content) {
               errors.push(`Row ${i + 2}: site "${site}" must be parf, srf, krf, or garf`);
               return;
             }
-            if (!phone) { errors.push(`Row ${i + 2}: phone is required (needed for PIN reset)`); return; }
 
             if (pin) {
               if (usedPins.has(pin)) { errors.push(`Row ${i + 2}: PIN "${pin}" is already in use`); return; }
@@ -908,10 +908,15 @@ function loadStaffTable(site) {
         ? `<input type="text" class="pin-edit" data-uid="${u.uid}" value="${u.pin || ""}" maxlength="4" style="width:60px; padding:4px; border:1px solid var(--border); border-radius:4px;">
            <button class="pin-save-btn" data-uid="${u.uid}" style="padding:4px 8px; font-size:0.75rem; background:var(--navy); color:white; border:none; border-radius:4px; cursor:pointer; margin-left:4px;">Save</button>`
         : "";
+      const phoneCell = `
+        <input type="tel" class="phone-edit" data-uid="${u.uid}" value="${u.phone || ""}" placeholder="717-555-0100"
+          style="width:130px; padding:4px; border:1px solid var(--border); border-radius:4px;">
+        <button class="phone-save-btn" data-uid="${u.uid}" style="padding:4px 8px; font-size:0.75rem; background:var(--navy); color:white; border:none; border-radius:4px; cursor:pointer; margin-left:4px;">Save</button>
+      `;
       return `<tr>
         <td style="padding:8px; border-bottom:1px solid var(--border);">${u.firstName} ${u.lastName}</td>
         <td style="padding:8px; border-bottom:1px solid var(--border);">${ROLES[u.role] ? ROLES[u.role].label : u.role}</td>
-        <td style="padding:8px; border-bottom:1px solid var(--border);">${u.phone || "—"}</td>
+        <td style="padding:8px; border-bottom:1px solid var(--border); white-space:nowrap;">${phoneCell}</td>
         <td style="padding:8px; border-bottom:1px solid var(--border); text-align:center;">${modCell}</td>
         <td style="padding:8px; border-bottom:1px solid var(--border);">${u.active === false ? "Inactive" : "Active"}</td>
         ${isSuperadminViewer ? `<td style="padding:8px; border-bottom:1px solid var(--border); white-space:nowrap;">${pinCell}</td>` : ""}
@@ -946,6 +951,20 @@ function loadStaffTable(site) {
             alert("Failed to update MOD status: " + err.message);
             checkbox.checked = !checkbox.checked;
           });
+      });
+    });
+
+    container.querySelectorAll(".phone-save-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const uid = btn.dataset.uid;
+        const input = container.querySelector(`.phone-edit[data-uid="${uid}"]`);
+        const newPhone = input.value.trim();
+        db.ref(`users/${uid}/phone`).set(newPhone)
+          .then(() => {
+            btn.textContent = "Saved";
+            setTimeout(() => { btn.textContent = "Save"; }, 1200);
+          })
+          .catch((err) => alert("Failed to update phone: " + err.message));
       });
     });
 
