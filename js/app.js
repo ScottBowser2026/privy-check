@@ -29,7 +29,8 @@ const ROLES = {
   superadmin: { label: "Superadmin", scope: "all" },
   superuser: { label: "Super User", scope: "site" },
   user: { label: "User", scope: "site" },
-  maintenance: { label: "Maintenance", scope: "site" }
+  maintenance: { label: "Maintenance", scope: "site" },
+  preevent: { label: "Pre-Event", scope: "site" }
 };
 
 // Default suggested out-of-order reasons (editable by Superadmin in Admin Panel later)
@@ -235,6 +236,10 @@ function renderTabsForRole(role) {
   } else if (role === "maintenance") {
     tabs = [
       { id: "out-of-order", label: "Flagged Units" }
+    ];
+  } else if (role === "preevent") {
+    tabs = [
+      { id: "pre-event", label: "Pre-Event" }
     ];
   }
 
@@ -577,7 +582,7 @@ function renderAdminPanel(content) {
       <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">
         CSV columns required: <code>first_name, last_name, email, phone, role, site, pin</code>.
         Phone is optional at import — but anyone without a phone on file can't use "Forgot PIN?" text reset until one is added (editable below in the staff list).
-        Role must be superadmin / superuser / user / maintenance. Site can be blank for superadmin (defaults to "all").
+        Role must be superadmin / superuser / user / maintenance / preevent. Site can be blank for superadmin (defaults to "all").
         Leave <code>pin</code> blank to auto-generate a unique 4-digit PIN. This <strong>adds</strong> new staff — it does not remove existing users.
       </p>
       <button id="staff-template-btn" style="padding:8px 14px; background:none; border:1px solid var(--navy); color:var(--navy); border-radius:6px; cursor:pointer; margin-bottom:14px;">
@@ -711,7 +716,7 @@ function renderAdminPanel(content) {
   document.getElementById("staff-import-btn").addEventListener("click", () => {
     const fileInput = document.getElementById("staff-csv-input");
     const statusEl = document.getElementById("staff-import-status");
-    const VALID_ROLES = ["superadmin", "superuser", "user", "maintenance"];
+    const VALID_ROLES = ["superadmin", "superuser", "user", "maintenance", "preevent"];
 
     if (!fileInput.files.length) {
       statusEl.style.color = "var(--danger)";
@@ -757,7 +762,7 @@ function renderAdminPanel(content) {
             let pin = (row.pin || "").trim();
 
             if (!firstName || !lastName) { errors.push(`Row ${i + 2}: missing first/last name`); return; }
-            if (!VALID_ROLES.includes(role)) { errors.push(`Row ${i + 2}: role "${role}" must be superadmin, superuser, user, or maintenance`); return; }
+            if (!VALID_ROLES.includes(role)) { errors.push(`Row ${i + 2}: role "${role}" must be superadmin, superuser, user, maintenance, or preevent`); return; }
             if (role === "superadmin") {
               site = "all";
             } else if (!Object.keys(SITES).includes(site)) {
