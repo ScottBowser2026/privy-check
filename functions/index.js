@@ -35,20 +35,23 @@ exports.resetPinByPhone = onCall(
       "If that phone number is on file, a new PIN has been sent by text.";
 
     try {
-      const usersSnap = await db
-        .ref("users")
-        .orderByChild("phone")
-        .equalTo(phone)
-        .once("value");
+      const digitsOnly = phone.replace(/\D/g, "");
+      const usersSnap = await db.ref("users").once("value");
 
-      if (!usersSnap.exists()) {
+      let uid = null;
+      let userRecord = null;
+      usersSnap.forEach((child) => {
+        const storedDigits = (child.val().phone || "").replace(/\D/g, "");
+        if (storedDigits && storedDigits === digitsOnly) {
+          uid = child.key;
+          userRecord = child.val();
+        }
+      });
+
+      if (!uid) {
         // No match — return the same generic response, no distinguishing signal
         return { message: GENERIC_MESSAGE };
       }
-
-      const usersObj = usersSnap.val();
-      const uid = Object.keys(usersObj)[0];
-      const userRecord = usersObj[uid];
 
       if (userRecord.active === false) {
         // Inactive account — still return generic message, no confirmation
@@ -63,7 +66,7 @@ exports.resetPinByPhone = onCall(
       await client.messages.create({
         body: `Your new Privy Check PIN is: ${newPin}. If you didn't request this, contact your Superadmin.`,
         from: TWILIO_FROM_NUMBER,
-        to: phone
+        to: toE164(phone)
       });
 
       return { message: GENERIC_MESSAGE };
@@ -74,6 +77,19 @@ exports.resetPinByPhone = onCall(
     }
   }
 );
+
+/**
+ * Normalizes a US phone number to E.164 format for Twilio.
+ * Strips non-digits; assumes US (+1) if 10 digits; passes through
+ * if already 11 digits starting with 1, or already has a +.
+ */
+function toE164(rawPhone) {
+  if (rawPhone.startsWith("+")) return rawPhone;
+  const digits = rawPhone.replace(/\D/g, "");
+  if (digits.length === 10) return `+1${digits}`;
+  if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
+  return `+${digits}`; // fallback, best effort
+}
 
 /**
  * Generates a random 4-digit PIN not already in use by any user.
