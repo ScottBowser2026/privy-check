@@ -373,7 +373,7 @@ function renderOutOfOrderManagement(content) {
       const maintenanceBySite = {};
       usersSnap.forEach((child) => {
         const u = child.val();
-        if (u.role === "maintenance" && u.active !== false) {
+        if (u.role === "maintenance" && u.active !== false && u.isMOD) {
           if (!maintenanceBySite[u.site]) maintenanceBySite[u.site] = [];
           maintenanceBySite[u.site].push({ uid: child.key, name: `${u.firstName} ${u.lastName}` });
         }
@@ -566,7 +566,7 @@ function renderAdminPanel(content) {
     <div class="card">
       <h3 style="color:var(--navy); margin-bottom:14px;">Staff — <span id="staff-table-site-label"></span></h3>
       <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">
-        Toggle "MOD" (Manager on Duty) for Super Users who should receive alert texts right now. Multiple Super Users can be MOD at once.
+        Toggle "MOD" (Manager/Maintenance on Duty) for Super Users and Maintenance staff who are currently on shift and should receive alerts / be assignable. Multiple people can be MOD at once.
       </p>
       <div id="staff-table-container">
         <p style="color:var(--muted);">Select a site above to view staff.</p>
@@ -901,7 +901,7 @@ function loadStaffTable(site) {
     const isSuperadminViewer = currentUser.role === "superadmin";
 
     const rows = relevantUsers.map(u => {
-      const modCell = u.role === "superuser"
+      const modCell = (u.role === "superuser" || u.role === "maintenance")
         ? `<input type="checkbox" class="mod-toggle" data-uid="${u.uid}" ${u.isMOD ? "checked" : ""} style="width:18px; height:18px; cursor:pointer;">`
         : `<span style="color:var(--border);">—</span>`;
       const pinCell = isSuperadminViewer
