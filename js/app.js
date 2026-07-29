@@ -236,7 +236,8 @@ function renderTabsForRole(role) {
     ];
   } else if (role === "maintenance") {
     tabs = [
-      { id: "out-of-order", label: "Flagged Units" }
+      { id: "out-of-order", label: "Flagged Units" },
+      { id: "supplies", label: "Log Supplies" }
     ];
   } else if (role === "preevent") {
     tabs = [
@@ -290,12 +291,17 @@ function renderTabContent(tabId) {
 
   if (tabId === "closing") {
     if (currentUser.role === "user") {
-      renderClosingInventoryCount(content);
+      renderInventoryCountEntry(content, "closing", "Closing Inventory Count");
     } else if (currentUser.role === "superadmin" || currentUser.role === "superuser") {
       renderInventoryCountHistory(content);
     } else {
       content.innerHTML = `<div class="panel-placeholder"><h3 style="margin-bottom:8px;color:var(--navy)">Closing Task List</h3><p>Checklist tasks coming in a future build pass.</p></div>`;
     }
+    return;
+  }
+
+  if (tabId === "supplies") {
+    renderInventoryCountEntry(content, "maintenance-restock", "Log Supplies Brought");
     return;
   }
 
@@ -638,8 +644,8 @@ function renderInventoryItemsAdmin(content) {
   });
 }
 
-// ===================== CLOSING: INVENTORY COUNT ENTRY (User) =====================
-function renderClosingInventoryCount(content) {
+// ===================== INVENTORY COUNT ENTRY (User closing count, or Maintenance supply restock) =====================
+function renderInventoryCountEntry(content, type, title) {
   const site = currentUser.site;
   content.innerHTML = `<div class="card"><p style="color:var(--muted);">Loading inventory items...</p></div>`;
 
@@ -649,24 +655,32 @@ function renderClosingInventoryCount(content) {
       return;
     }
     const items = snap.val();
+    const inputLabel = type === "maintenance-restock" ? "Cases brought" : "Case count";
     const rows = Object.entries(items).map(([key, item]) => `
       <div style="display:flex; align-items:center; justify-content:space-between; padding:10px 0; border-bottom:1px solid var(--border);">
         <div>
           <div style="font-weight:600;">${item.name}</div>
           <div style="color:var(--muted); font-size:0.75rem;">Par level: ${item.parLevel} cases</div>
         </div>
-        <input type="number" class="count-input" data-key="${key}" data-name="${item.name}" step="0.25" min="0" placeholder="0.00"
-          style="width:100px; padding:8px; border:1px solid var(--border); border-radius:6px; text-align:right;">
+        <div style="text-align:right;">
+          <label style="display:block; font-size:0.7rem; color:var(--muted);">${inputLabel}</label>
+          <input type="number" class="count-input" data-key="${key}" data-name="${item.name}" step="0.25" min="0" placeholder="0.00"
+            style="width:100px; padding:8px; border:1px solid var(--border); border-radius:6px; text-align:right;">
+        </div>
       </div>
     `).join("");
 
     content.innerHTML = `
       <div class="card">
-        <h3 style="color:var(--navy); margin-bottom:8px;">Closing Inventory Count — ${SITES[site]}</h3>
-        <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">Enter case count for each item (in quarter-case increments, e.g. .25, .50, .75, 1.00, 1.25...).</p>
+        <h3 style="color:var(--navy); margin-bottom:8px;">${title} — ${SITES[site]}</h3>
+        <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">
+          ${type === "maintenance-restock"
+            ? "Log how many cases of each item you brought/restocked (quarter-case increments, e.g. .25, .50, .75, 1.00...)."
+            : "Enter case count for each item (in quarter-case increments, e.g. .25, .50, .75, 1.00, 1.25...)."}
+        </p>
         ${rows}
         <button id="submit-count-btn" style="margin-top:16px; padding:10px 20px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer;">
-          Submit Inventory Count
+          Submit
         </button>
         <div id="count-submit-status" style="margin-top:12px; font-size:0.85rem;"></div>
       </div>
@@ -691,13 +705,15 @@ function renderClosingInventoryCount(content) {
       }
 
       db.ref(`sites/${site}/inventoryCounts`).push({
+        type,
         countedByUid: currentUser.uid,
         countedByName: `${currentUser.firstName} ${currentUser.lastName}`,
+        countedByRole: currentUser.role,
         timestamp: firebase.database.ServerValue.TIMESTAMP,
         counts
       }).then(() => {
         statusEl.style.color = "var(--success)";
-        statusEl.textContent = "Inventory count submitted.";
+        statusEl.textContent = "Submitted.";
       }).catch((err) => {
         statusEl.style.color = "var(--danger)";
         statusEl.textContent = "Failed to submit: " + err.message;
@@ -749,7 +765,12 @@ function renderInventoryCountHistory(content) {
 
       return `
         <div class="card" style="margin-bottom:10px;">
-          <div style="font-weight:600; margin-bottom:4px;">${entry.countedByName}</div>
+          <div style="display:flex; justify-content:space-between; align-items:baseline;">
+            <div style="font-weight:600; margin-bottom:4px;">${entry.countedByName}</div>
+            <span style="font-size:0.75rem; padding:2px 8px; border-radius:10px; ${entry.type === "maintenance-restock" ? "background:#f0dcd8; color:#a13f30;" : "background:#e2ede0; color:#3a7d44;"}">
+              ${entry.type === "maintenance-restock" ? "Maintenance restock" : "Closing count"}
+            </span>
+          </div>
           <div style="color:var(--muted); font-size:0.75rem; margin-bottom:10px;">${when}</div>
           ${itemRows}
         </div>
