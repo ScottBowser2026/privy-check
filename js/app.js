@@ -308,6 +308,15 @@ function renderAdminPanel(content) {
       </div>
     </div>
     <div class="card">
+      <h3 style="color:var(--navy); margin-bottom:14px;">Staff — <span id="staff-table-site-label"></span></h3>
+      <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">
+        Toggle "MOD" (Manager on Duty) for Super Users who should receive alert texts right now. Multiple Super Users can be MOD at once.
+      </p>
+      <div id="staff-table-container">
+        <p style="color:var(--muted);">Select a site above to view staff.</p>
+      </div>
+    </div>
+    <div class="card">
       <h3 style="color:var(--navy); margin-bottom:14px;">Import Staff (CSV)</h3>
       <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">
         CSV columns required: <code>first_name, last_name, email, phone, role, site, pin</code>.
@@ -328,8 +337,12 @@ function renderAdminPanel(content) {
   `;
 
   const siteSelect = document.getElementById("admin-site-select");
-  siteSelect.addEventListener("change", () => loadUnitsTable(siteSelect.value));
+  siteSelect.addEventListener("change", () => {
+    loadUnitsTable(siteSelect.value);
+    loadStaffTable(siteSelect.value);
+  });
   loadUnitsTable(siteSelect.value);
+  loadStaffTable(siteSelect.value);
 
   document.getElementById("csv-template-btn").addEventListener("click", () => {
     const site = siteSelect.value;
@@ -531,6 +544,71 @@ function renderAdminPanel(content) {
           statusEl.style.color = "var(--danger)";
           statusEl.textContent = "Could not parse CSV: " + err.message;
         }
+      });
+    });
+  });
+}
+
+function loadStaffTable(site) {
+  document.getElementById("staff-table-site-label").textContent = SITES[site] || site;
+  const container = document.getElementById("staff-table-container");
+  container.innerHTML = "<p style='color:var(--muted);'>Loading...</p>";
+
+  db.ref("users").once("value").then((snap) => {
+    if (!snap.exists()) {
+      container.innerHTML = "<p style='color:var(--muted);'>No staff yet.</p>";
+      return;
+    }
+
+    const relevantUsers = [];
+    snap.forEach((child) => {
+      const u = child.val();
+      if (u.site === site || u.role === "superadmin") {
+        relevantUsers.push({ uid: child.key, ...u });
+      }
+    });
+
+    if (!relevantUsers.length) {
+      container.innerHTML = "<p style='color:var(--muted);'>No staff for this site yet.</p>";
+      return;
+    }
+
+    const rows = relevantUsers.map(u => {
+      const modCell = u.role === "superuser"
+        ? `<input type="checkbox" class="mod-toggle" data-uid="${u.uid}" ${u.isMOD ? "checked" : ""} style="width:18px; height:18px; cursor:pointer;">`
+        : `<span style="color:var(--border);">—</span>`;
+      return `<tr>
+        <td style="padding:8px; border-bottom:1px solid var(--border);">${u.firstName} ${u.lastName}</td>
+        <td style="padding:8px; border-bottom:1px solid var(--border);">${ROLES[u.role] ? ROLES[u.role].label : u.role}</td>
+        <td style="padding:8px; border-bottom:1px solid var(--border);">${u.phone || "—"}</td>
+        <td style="padding:8px; border-bottom:1px solid var(--border); text-align:center;">${modCell}</td>
+        <td style="padding:8px; border-bottom:1px solid var(--border);">${u.active === false ? "Inactive" : "Active"}</td>
+      </tr>`;
+    }).join("");
+
+    container.innerHTML = `
+      <table style="width:100%; border-collapse:collapse; font-size:0.85rem;">
+        <thead>
+          <tr style="text-align:left; color:var(--muted);">
+            <th style="padding:8px; border-bottom:2px solid var(--border);">Name</th>
+            <th style="padding:8px; border-bottom:2px solid var(--border);">Role</th>
+            <th style="padding:8px; border-bottom:2px solid var(--border);">Phone</th>
+            <th style="padding:8px; border-bottom:2px solid var(--border); text-align:center;">MOD</th>
+            <th style="padding:8px; border-bottom:2px solid var(--border);">Status</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `;
+
+    container.querySelectorAll(".mod-toggle").forEach((checkbox) => {
+      checkbox.addEventListener("change", () => {
+        const uid = checkbox.dataset.uid;
+        db.ref(`users/${uid}/isMOD`).set(checkbox.checked)
+          .catch((err) => {
+            alert("Failed to update MOD status: " + err.message);
+            checkbox.checked = !checkbox.checked;
+          });
       });
     });
   });
