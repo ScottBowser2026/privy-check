@@ -290,6 +290,10 @@ function renderAdminPanel(content) {
         ${siteOptions}
       </select>
       <br>
+      <button id="csv-template-btn" style="padding:8px 14px; background:none; border:1px solid var(--navy); color:var(--navy); border-radius:6px; cursor:pointer; margin-bottom:14px;">
+        Download blank template for this site
+      </button>
+      <br>
       <input type="file" id="csv-file-input" accept=".csv" style="margin-bottom:14px;">
       <br>
       <button id="csv-import-btn" style="padding:10px 18px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer;">
@@ -308,6 +312,20 @@ function renderAdminPanel(content) {
   const siteSelect = document.getElementById("admin-site-select");
   siteSelect.addEventListener("change", () => loadUnitsTable(siteSelect.value));
   loadUnitsTable(siteSelect.value);
+
+  document.getElementById("csv-template-btn").addEventListener("click", () => {
+    const site = siteSelect.value;
+    const csvContent = "unit_name,location,type\nPrivy 1,Main Gate,Male\nPrivy 2,Main Gate,Female\nPrivy 3,Main Gate,ADA\n";
+    const blob = new Blob([csvContent], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `privy-check-units-${site}-template.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  });
 
   document.getElementById("csv-import-btn").addEventListener("click", () => {
     const fileInput = document.getElementById("csv-file-input");
