@@ -346,6 +346,7 @@ function renderAdminPanel(content) {
         const rows = results.data;
         const errors = [];
         const units = {};
+        const nameTypeCounts = {};
 
         rows.forEach((row, i) => {
           const name = (row.unit_name || "").trim();
@@ -358,7 +359,14 @@ function renderAdminPanel(content) {
             return;
           }
 
-          const unitKey = name.replace(/[.#$/\[\]]/g, "_");
+          // Same location name can have multiple facilities of the same type
+          // (e.g. "King Loo" with 2 ADA stalls) — track an occurrence count so
+          // every row gets a unique key instead of overwriting the previous one.
+          const baseKey = `${name}__${type}`.replace(/[.#$/\[\]]/g, "_");
+          nameTypeCounts[baseKey] = (nameTypeCounts[baseKey] || 0) + 1;
+          const occurrence = nameTypeCounts[baseKey];
+          const unitKey = occurrence > 1 ? `${baseKey}_${occurrence}` : baseKey;
+
           units[unitKey] = { name, location, type, status: "ok" };
         });
 
