@@ -12,8 +12,14 @@ const firebaseConfig = {
 
 firebase.initializeApp(firebaseConfig);
 const db = firebase.database();
-const auth = firebase.auth ? firebase.auth() : null; // anonymous auth added once Auth SDK script is included
+const auth = firebase.auth();
 const storage = firebase.storage();
+
+// Sign in anonymously as soon as the app loads, so database rules (auth != null)
+// are satisfied before any PIN lookup happens. Same pattern as Punch List.
+const authReady = auth.signInAnonymously().catch((err) => {
+  console.error("Anonymous auth failed:", err);
+});
 
 // ===================== CONSTANTS =====================
 const SITES = { parf: "PARF", srf: "SRF", krf: "KRF", garf: "GARF" };
@@ -76,7 +82,7 @@ function renderPinDots() {
 
 function attemptLogin(pin) {
   loginErrorEl.textContent = "";
-  db.ref("users").orderByChild("pin").equalTo(pin).once("value")
+  authReady.then(() => db.ref("users").orderByChild("pin").equalTo(pin).once("value"))
     .then((snap) => {
       if (!snap.exists()) {
         loginErrorEl.textContent = "Incorrect PIN. Try again.";
