@@ -278,7 +278,22 @@ function renderAdminPanel(content) {
     ? Object.entries(SITES).map(([key, label]) => `<option value="${key}">${label}</option>`).join("")
     : `<option value="${currentUser.site}">${SITES[currentUser.site]}</option>`;
 
-  content.innerHTML = `
+  const sandboxCard = isSuperadmin ? `
+    <div class="card">
+      <h3 style="color:var(--navy); margin-bottom:14px;">Sandbox Mode</h3>
+      <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">
+        When ON, no real texts are sent (PIN resets, and future out-of-order alerts). Actions are logged instead, and PIN reset shows you the generated PIN directly on screen for testing.
+      </p>
+      <label style="display:flex; align-items:center; gap:10px; cursor:pointer;">
+        <input type="checkbox" id="sandbox-mode-toggle" style="width:20px; height:20px; cursor:pointer;">
+        <span id="sandbox-mode-label" style="font-weight:600;">Loading...</span>
+      </label>
+      <h4 style="margin-top:20px; margin-bottom:10px; color:var(--navy); font-size:0.9rem;">Recent SMS Log</h4>
+      <div id="sms-log-container"><p style="color:var(--muted); font-size:0.85rem;">Loading...</p></div>
+    </div>
+  ` : "";
+
+  content.innerHTML = sandboxCard + `
     <div class="card">
       <h3 style="color:var(--navy); margin-bottom:14px;">Import Privy Units (CSV)</h3>
       <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">
@@ -343,6 +358,11 @@ function renderAdminPanel(content) {
   });
   loadUnitsTable(siteSelect.value);
   loadStaffTable(siteSelect.value);
+
+  if (isSuperadmin) {
+    setupSandboxModeToggle();
+    loadSmsLog();
+  }
 
   document.getElementById("csv-template-btn").addEventListener("click", () => {
     const site = siteSelect.value;
@@ -546,6 +566,70 @@ function renderAdminPanel(content) {
         }
       });
     });
+  });
+}
+
+function setupSandboxModeToggle() {
+  const toggle = document.getElementById("sandbox-mode-toggle");
+  const label = document.getElementById("sandbox-mode-label");
+
+  db.ref("settings/sandboxMode").once("value").then((snap) => {
+    const isOn = snap.val() === true;
+    toggle.checked = isOn;
+    label.textContent = isOn ? "ON — no real texts are being sent" : "OFF — texts send normally";
+    label.style.color = isOn ? "var(--warn)" : "var(--success)";
+  });
+
+  toggle.addEventListener("change", () => {
+    db.ref("settings/sandboxMode").set(toggle.checked)
+      .then(() => {
+        label.textContent = toggle.checked ? "ON — no real texts are being sent" : "OFF — texts send normally";
+        label.style.color = toggle.checked ? "var(--warn)" : "var(--success)";
+      })
+      .catch((err) => {
+        alert("Failed to update sandbox mode: " + err.message);
+        toggle.checked = !toggle.checked;
+      });
+  });
+}
+
+function loadSmsLog() {
+  const container = document.getElementById("sms-log-container");
+  db.ref("smsLog").limitToLast(10).once("value").then((snap) => {
+    if (!snap.exists()) {
+      container.innerHTML = "<p style='color:var(--muted); font-size:0.85rem;'>No SMS activity logged yet.</p>";
+      return;
+    }
+    const entries = [];
+    snap.forEach((child) => entries.push(child.val()));
+    entries.reverse();
+
+    const rows = entries.map(e => {
+      const when = e.timestamp ? new Date(e.timestamp).toLocaleString() : "—";
+      const badge = e.sentReal
+        ? `<span style="color:var(--success);">sent</span>`
+        : `<span style="color:var(--warn);">sandbox (logged only)</span>`;
+      return `<tr>
+        <td style="padding:6px; border-bottom:1px solid var(--border); font-size:0.8rem;">${when}</td>
+        <td style="padding:6px; border-bottom:1px solid var(--border); font-size:0.8rem;">${e.to}</td>
+        <td style="padding:6px; border-bottom:1px solid var(--border); font-size:0.8rem;">${e.type}</td>
+        <td style="padding:6px; border-bottom:1px solid var(--border); font-size:0.8rem;">${badge}</td>
+      </tr>`;
+    }).join("");
+
+    container.innerHTML = `
+      <table style="width:100%; border-collapse:collapse;">
+        <thead>
+          <tr style="text-align:left; color:var(--muted); font-size:0.75rem;">
+            <th style="padding:6px; border-bottom:2px solid var(--border);">When</th>
+            <th style="padding:6px; border-bottom:2px solid var(--border);">To</th>
+            <th style="padding:6px; border-bottom:2px solid var(--border);">Type</th>
+            <th style="padding:6px; border-bottom:2px solid var(--border);">Status</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `;
   });
 }
 

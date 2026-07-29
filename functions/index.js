@@ -62,11 +62,38 @@ exports.resetPinByPhone = onCall(
 
       await db.ref(`users/${uid}/pin`).set(newPin);
 
+      const smsBody = `Your new Privy Check PIN is: ${newPin}. If you didn't request this, contact your Superadmin.`;
+      const toNumber = toE164(phone);
+
+      const settingsSnap = await db.ref("settings/sandboxMode").once("value");
+      const sandboxMode = settingsSnap.val() === true;
+
+      if (sandboxMode) {
+        await db.ref("smsLog").push({
+          to: toNumber,
+          body: smsBody,
+          type: "resetPinByPhone",
+          sentReal: false,
+          timestamp: admin.database.ServerValue.TIMESTAMP
+        });
+        return {
+          message: `[SANDBOX MODE] No real text was sent. Generated PIN for testing: ${newPin}`
+        };
+      }
+
       const client = twilio(TWILIO_ACCOUNT_SID.value(), TWILIO_AUTH_TOKEN.value());
       await client.messages.create({
-        body: `Your new Privy Check PIN is: ${newPin}. If you didn't request this, contact your Superadmin.`,
+        body: smsBody,
         from: TWILIO_FROM_NUMBER,
-        to: toE164(phone)
+        to: toNumber
+      });
+
+      await db.ref("smsLog").push({
+        to: toNumber,
+        body: smsBody,
+        type: "resetPinByPhone",
+        sentReal: true,
+        timestamp: admin.database.ServerValue.TIMESTAMP
       });
 
       return { message: GENERIC_MESSAGE };
