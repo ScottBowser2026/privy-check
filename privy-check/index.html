@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<title>Privy Check</title>
+<style>
+  :root {
+    --navy: #1e2a3a;
+    --gold: #b8862e;
+    --gold-light: #d9a94a;
+    --bg: #f4f2ee;
+    --card: #ffffff;
+    --danger: #b0362c;
+    --success: #3a7d44;
+    --warn: #c07a1e;
+    --text: #2a2a2a;
+    --muted: #6b6b6b;
+    --border: #e0ddd6;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+
+  /* ---------- LOGIN SCREEN ---------- */
+  #login-screen {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    background: linear-gradient(135deg, var(--navy) 0%, #2c3e50 100%);
+  }
+  .login-card {
+    background: var(--card);
+    border-radius: 12px;
+    padding: 40px 36px;
+    width: 100%;
+    max-width: 380px;
+    box-shadow: 0 20px 50px rgba(0,0,0,0.35);
+    text-align: center;
+  }
+  .login-card h1 {
+    font-size: 1.5rem;
+    color: var(--navy);
+    margin-bottom: 4px;
+  }
+  .login-card .subtitle {
+    color: var(--muted);
+    font-size: 0.85rem;
+    margin-bottom: 28px;
+  }
+  .pin-dots {
+    display: flex;
+    justify-content: center;
+    gap: 14px;
+    margin-bottom: 24px;
+  }
+  .pin-dot {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    border: 2px solid var(--border);
+    background: transparent;
+    transition: all 0.15s;
+  }
+  .pin-dot.filled {
+    background: var(--gold);
+    border-color: var(--gold);
+  }
+  .keypad {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+  .keypad button {
+    padding: 16px 0;
+    font-size: 1.2rem;
+    border: 1px solid var(--border);
+    background: #fafafa;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.1s;
+  }
+  .keypad button:hover { background: #eee; }
+  .keypad button:active { background: var(--gold-light); color: white; }
+  .keypad button.action { background: transparent; border: none; color: var(--muted); font-size: 0.9rem; }
+  #login-error {
+    color: var(--danger);
+    font-size: 0.85rem;
+    min-height: 20px;
+    margin-bottom: 8px;
+  }
+  #forgot-pin-link {
+    color: var(--navy);
+    font-size: 0.8rem;
+    text-decoration: underline;
+    cursor: pointer;
+    background: none;
+    border: none;
+  }
+
+  /* ---------- APP SHELL ---------- */
+  #app-shell { display: none; min-height: 100vh; }
+  #app-shell.active { display: block; }
+  header.topbar {
+    background: var(--navy);
+    color: white;
+    padding: 14px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  header.topbar .brand { font-size: 1.15rem; font-weight: 600; }
+  header.topbar .brand span { color: var(--gold-light); }
+  .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 0.85rem; }
+  select#site-selector {
+    padding: 6px 10px;
+    border-radius: 6px;
+    border: none;
+    font-size: 0.85rem;
+  }
+  #logout-btn {
+    background: transparent;
+    border: 1px solid rgba(255,255,255,0.4);
+    color: white;
+    padding: 6px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.8rem;
+  }
+  nav.tabs {
+    display: flex;
+    background: white;
+    border-bottom: 1px solid var(--border);
+    padding: 0 24px;
+    overflow-x: auto;
+  }
+  nav.tabs button {
+    padding: 14px 18px;
+    background: none;
+    border: none;
+    font-size: 0.9rem;
+    color: var(--muted);
+    cursor: pointer;
+    border-bottom: 3px solid transparent;
+    white-space: nowrap;
+  }
+  nav.tabs button.active {
+    color: var(--navy);
+    border-bottom-color: var(--gold);
+    font-weight: 600;
+  }
+  main.content { padding: 24px; max-width: 1100px; margin: 0 auto; }
+  .panel-placeholder {
+    background: var(--card);
+    border: 1px dashed var(--border);
+    border-radius: 10px;
+    padding: 40px;
+    text-align: center;
+    color: var(--muted);
+  }
+  .card {
+    background: var(--card);
+    border-radius: 10px;
+    padding: 20px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    margin-bottom: 16px;
+  }
+  .role-badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .role-badge.superadmin { background: #f0e2c0; color: #8a6414; }
+  .role-badge.superuser { background: #dce8f5; color: #2c5f8a; }
+  .role-badge.user { background: #e2ede0; color: #3a7d44; }
+  .role-badge.maintenance { background: #f0dcd8; color: #a13f30; }
+</style>
+</head>
+<body>
+
+<!-- ================= LOGIN SCREEN ================= -->
+<div id="login-screen">
+  <div class="login-card">
+    <h1>Privy Check</h1>
+    <div class="subtitle">Enter your PIN to continue</div>
+    <div class="pin-dots" id="pin-dots">
+      <div class="pin-dot"></div>
+      <div class="pin-dot"></div>
+      <div class="pin-dot"></div>
+      <div class="pin-dot"></div>
+    </div>
+    <div id="login-error"></div>
+    <div class="keypad" id="keypad">
+      <button data-key="1">1</button>
+      <button data-key="2">2</button>
+      <button data-key="3">3</button>
+      <button data-key="4">4</button>
+      <button data-key="5">5</button>
+      <button data-key="6">6</button>
+      <button data-key="7">7</button>
+      <button data-key="8">8</button>
+      <button data-key="9">9</button>
+      <button class="action" data-key="clear">Clear</button>
+      <button data-key="0">0</button>
+      <button class="action" data-key="back">&#9003;</button>
+    </div>
+    <button id="forgot-pin-link">Forgot PIN?</button>
+  </div>
+</div>
+
+<!-- ================= APP SHELL ================= -->
+<div id="app-shell">
+  <header class="topbar">
+    <div class="brand">Privy <span>Check</span></div>
+    <div class="topbar-right">
+      <span id="user-name-display"></span>
+      <span id="role-badge-display"></span>
+      <select id="site-selector"><option>All Sites</option></select>
+      <button id="logout-btn">Log Out</button>
+    </div>
+  </header>
+  <nav class="tabs" id="main-tabs">
+    <!-- populated by JS based on role -->
+  </nav>
+  <main class="content" id="main-content">
+    <div class="panel-placeholder">Loading...</div>
+  </main>
+</div>
+
+<!-- Firebase compat SDK -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js"></script>
+<script src="js/app.js?v=1"></script>
+</body>
+</html>
