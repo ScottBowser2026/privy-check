@@ -220,6 +220,22 @@
       <button class="action" data-key="back">&#9003;</button>
     </div>
     <button id="forgot-pin-link">Forgot PIN?</button>
+
+    <div id="reset-pin-panel" style="display:none; margin-top:20px; text-align:left;">
+      <label style="font-size:0.8rem; color:var(--muted); display:block; margin-bottom:6px;">
+        Enter the phone number on file:
+      </label>
+      <input type="tel" id="reset-phone-input" placeholder="717-555-0100"
+        style="width:100%; padding:10px; border:1px solid var(--border); border-radius:6px; font-size:0.9rem; margin-bottom:10px;">
+      <button id="reset-phone-submit"
+        style="width:100%; padding:10px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer; margin-bottom:8px;">
+        Send new PIN
+      </button>
+      <button id="reset-phone-cancel"
+        style="width:100%; padding:8px; background:none; border:none; color:var(--muted); cursor:pointer; font-size:0.8rem;">
+        Cancel
+      </button>
+    </div>
   </div>
 </div>
 
@@ -247,6 +263,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-functions-compat.js"></script>
 <script src="js/app.js?v=1"></script>
 </body>
 </html>

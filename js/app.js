@@ -14,6 +14,7 @@ firebase.initializeApp(firebaseConfig);
 const db = firebase.database();
 const auth = firebase.auth();
 const storage = firebase.storage();
+const functions = firebase.functions();
 
 // Sign in anonymously as soon as the app loads, so database rules (auth != null)
 // are satisfied before any PIN lookup happens. Same pattern as Punch List.
@@ -113,7 +114,47 @@ function attemptLogin(pin) {
 }
 
 document.getElementById("forgot-pin-link").addEventListener("click", () => {
-  loginErrorEl.textContent = "If an account exists for that name, PIN recovery instructions have been sent. Contact your Superadmin if you don't receive them.";
+  document.getElementById("reset-pin-panel").style.display = "block";
+  document.getElementById("forgot-pin-link").style.display = "none";
+  loginErrorEl.textContent = "";
+});
+
+document.getElementById("reset-phone-cancel").addEventListener("click", () => {
+  document.getElementById("reset-pin-panel").style.display = "none";
+  document.getElementById("forgot-pin-link").style.display = "inline";
+  document.getElementById("reset-phone-input").value = "";
+  loginErrorEl.textContent = "";
+});
+
+document.getElementById("reset-phone-submit").addEventListener("click", () => {
+  const phone = document.getElementById("reset-phone-input").value.trim();
+  const submitBtn = document.getElementById("reset-phone-submit");
+
+  if (!phone) {
+    loginErrorEl.textContent = "Enter a phone number.";
+    return;
+  }
+
+  submitBtn.disabled = true;
+  submitBtn.textContent = "Sending...";
+  loginErrorEl.textContent = "";
+
+  const resetPinByPhone = functions.httpsCallable("resetPinByPhone");
+  authReady
+    .then(() => resetPinByPhone({ phone }))
+    .then((result) => {
+      loginErrorEl.style.color = "var(--success)";
+      loginErrorEl.textContent = result.data.message;
+      submitBtn.disabled = false;
+      submitBtn.textContent = "Send new PIN";
+    })
+    .catch((err) => {
+      console.error(err);
+      loginErrorEl.style.color = "var(--danger)";
+      loginErrorEl.textContent = "Something went wrong. Try again or contact your Superadmin.";
+      submitBtn.disabled = false;
+      submitBtn.textContent = "Send new PIN";
+    });
 });
 
 document.getElementById("logout-btn").addEventListener("click", () => {
