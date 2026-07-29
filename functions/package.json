@@ -2,7 +2,7 @@
   "name": "privy-check-functions",
   "description": "Cloud Functions for Privy Check - PIN reset via SMS, out-of-order alerts",
   "engines": {
-    "node": "18"
+    "node": "20"
   },
   "main": "index.js",
   "dependencies": {
