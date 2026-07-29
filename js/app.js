@@ -205,6 +205,11 @@ function setupSiteSelector() {
     selector.appendChild(opt);
     selector.disabled = true;
   }
+
+  selector.addEventListener("change", () => {
+    const activeTabBtn = document.querySelector("#main-tabs button.active");
+    if (activeTabBtn) renderTabContent(activeTabBtn.dataset.tabId);
+  });
 }
 
 function renderTabsForRole(role) {
@@ -257,11 +262,17 @@ function renderTabContent(tabId) {
     return;
   }
 
+  if (tabId === "out-of-order") {
+    if (currentUser.role === "user") renderFlagUnitForm(content);
+    else if (currentUser.role === "maintenance") renderMaintenanceQueue(content);
+    else renderOutOfOrderManagement(content); // superadmin / superuser
+    return;
+  }
+
   const labels = {
     "pre-event": "Pre-Event Task List",
     "during-event": "During-Event Task List",
-    "closing": "Closing Task List",
-    "out-of-order": currentUser.role === "maintenance" ? "Flagged Units" : "Out-of-Order Reports"
+    "closing": "Closing Task List"
   };
   content.innerHTML = `
     <div class="panel-placeholder">
@@ -269,6 +280,236 @@ function renderTabContent(tabId) {
       <p>This section is scaffolded and ready for data binding — coming in the next build pass.</p>
     </div>
   `;
+}
+
+// ===================== OUT-OF-ORDER: USER FLAGS A UNIT =====================
+function renderFlagUnitForm(content) {
+  const site = currentUser.site;
+  content.innerHTML = `<div class="card"><p style="color:var(--muted);">Loading units...</p></div>`;
+
+  db.ref(`sites/${site}/units`).once("value").then((snap) => {
+    if (!snap.exists()) {
+      content.innerHTML = `<div class="panel-placeholder">No units have been imported for ${SITES[site]} yet. Ask your Superadmin to import units in the Admin Panel.</div>`;
+      return;
+    }
+    const units = snap.val();
+    const unitOptions = Object.entries(units)
+      .map(([key, u]) => `<option value="${key}">${u.name} — ${u.type}${u.status === "outOfOrder" ? " (already flagged)" : ""}</option>`)
+      .join("");
+    const reasonOptions = DEFAULT_OOO_REASONS.map(r => `<option value="${r}">${r}</option>`).join("");
+
+    content.innerHTML = `
+      <div class="card">
+        <h3 style="color:var(--navy); margin-bottom:14px;">Flag a Unit — ${SITES[site]}</h3>
+        <label style="display:block; font-size:0.85rem; color:var(--muted); margin-bottom:6px;">Unit</label>
+        <select id="flag-unit-select" style="width:100%; padding:10px; border:1px solid var(--border); border-radius:6px; margin-bottom:14px;">
+          ${unitOptions}
+        </select>
+        <label style="display:block; font-size:0.85rem; color:var(--muted); margin-bottom:6px;">Suspected reason</label>
+        <select id="flag-reason-select" style="width:100%; padding:10px; border:1px solid var(--border); border-radius:6px; margin-bottom:14px;">
+          ${reasonOptions}
+        </select>
+        <label style="display:block; font-size:0.85rem; color:var(--muted); margin-bottom:6px;">Additional notes</label>
+        <textarea id="flag-notes-input" rows="3" style="width:100%; padding:10px; border:1px solid var(--border); border-radius:6px; margin-bottom:14px; font-family:inherit;" placeholder="Optional details..."></textarea>
+        <button id="flag-submit-btn" style="padding:10px 20px; background:var(--danger); color:white; border:none; border-radius:6px; cursor:pointer; font-weight:600;">
+          Flag This Unit
+        </button>
+        <div id="flag-status-msg" style="margin-top:12px; font-size:0.85rem;"></div>
+      </div>
+    `;
+
+    document.getElementById("flag-submit-btn").addEventListener("click", () => {
+      const unitKey = document.getElementById("flag-unit-select").value;
+      const unitName = units[unitKey].name;
+      const reason = document.getElementById("flag-reason-select").value;
+      const notes = document.getElementById("flag-notes-input").value.trim();
+      const statusMsg = document.getElementById("flag-status-msg");
+
+      const flagRef = db.ref(`sites/${site}/outOfOrder`).push();
+      const flagData = {
+        unitKey, unitName, reason, notes,
+        flaggedByUid: currentUser.uid,
+        flaggedByName: `${currentUser.firstName} ${currentUser.lastName}`,
+        flaggedAt: firebase.database.ServerValue.TIMESTAMP,
+        status: "open"
+      };
+
+      flagRef.set(flagData)
+        .then(() => db.ref(`sites/${site}/units/${unitKey}/status`).set("outOfOrder"))
+        .then(() => {
+          statusMsg.style.color = "var(--success)";
+          statusMsg.textContent = `${unitName} flagged as out of order. Your Super User has been notified.`;
+          document.getElementById("flag-notes-input").value = "";
+        })
+        .catch((err) => {
+          statusMsg.style.color = "var(--danger)";
+          statusMsg.textContent = "Failed to submit flag: " + err.message;
+        });
+    });
+  });
+}
+
+// ===================== OUT-OF-ORDER: SUPERADMIN / SUPERUSER MANAGEMENT =====================
+function renderOutOfOrderManagement(content) {
+  const topSelector = document.getElementById("site-selector");
+  const selectedSite = topSelector.value;
+  const sitesToShow = (currentUser.role === "superadmin" && selectedSite === "all")
+    ? Object.keys(SITES)
+    : [currentUser.role === "superadmin" ? selectedSite : currentUser.site];
+
+  content.innerHTML = `<div class="card"><p style="color:var(--muted);">Loading reports...</p></div>`;
+
+  const allFlags = [];
+  const fetches = sitesToShow.map(site =>
+    db.ref(`sites/${site}/outOfOrder`).once("value").then(snap => {
+      if (snap.exists()) {
+        snap.forEach(child => allFlags.push({ site, flagId: child.key, ...child.val() }));
+      }
+    })
+  );
+
+  Promise.all(fetches).then(() => {
+    db.ref("users").once("value").then((usersSnap) => {
+      const maintenanceBySite = {};
+      usersSnap.forEach((child) => {
+        const u = child.val();
+        if (u.role === "maintenance" && u.active !== false) {
+          if (!maintenanceBySite[u.site]) maintenanceBySite[u.site] = [];
+          maintenanceBySite[u.site].push({ uid: child.key, name: `${u.firstName} ${u.lastName}` });
+        }
+      });
+
+      if (!allFlags.length) {
+        content.innerHTML = `<div class="panel-placeholder">No out-of-order reports for ${sitesToShow.length > 1 ? "any site" : SITES[sitesToShow[0]]} right now.</div>`;
+        return;
+      }
+
+      allFlags.sort((a, b) => (b.flaggedAt || 0) - (a.flaggedAt || 0));
+
+      const rowsHtml = allFlags.map(f => {
+        const when = f.flaggedAt ? new Date(f.flaggedAt).toLocaleString() : "—";
+        const techs = maintenanceBySite[f.site] || [];
+        const techOptions = `<option value="">Unassigned</option>` + techs.map(t =>
+          `<option value="${t.uid}" ${f.assignedToUid === t.uid ? "selected" : ""}>${t.name}</option>`
+        ).join("");
+
+        const statusBadge = {
+          open: `<span style="color:var(--danger); font-weight:600;">Open</span>`,
+          assigned: `<span style="color:var(--warn); font-weight:600;">Assigned</span>`,
+          closed: `<span style="color:var(--success); font-weight:600;">Resolved</span>`
+        }[f.status] || f.status;
+
+        return `
+          <div class="card" style="margin-bottom:10px;">
+            <div style="display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px;">
+              <div>
+                <strong>${f.unitName}</strong> ${sitesToShow.length > 1 ? `<span style="color:var(--muted); font-size:0.8rem;">(${SITES[f.site]})</span>` : ""}
+                <div style="color:var(--muted); font-size:0.85rem; margin-top:4px;">${f.reason}${f.notes ? " — " + f.notes : ""}</div>
+                <div style="color:var(--muted); font-size:0.75rem; margin-top:4px;">Flagged by ${f.flaggedByName} · ${when}</div>
+                ${f.status === "open" && f.wasReassigned ? `<div style="color:var(--warn); font-size:0.8rem; margin-top:4px;">⚠ Maintenance reported this still needs repair</div>` : ""}
+              </div>
+              <div style="text-align:right;">
+                <div style="margin-bottom:6px;">${statusBadge}</div>
+                <select class="assign-select" data-site="${f.site}" data-flag-id="${f.flagId}" style="padding:6px; border-radius:6px; border:1px solid var(--border);" ${f.status === "closed" ? "disabled" : ""}>
+                  ${techOptions}
+                </select>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join("");
+
+      content.innerHTML = rowsHtml;
+
+      content.querySelectorAll(".assign-select").forEach((select) => {
+        select.addEventListener("change", () => {
+          const site = select.dataset.site;
+          const flagId = select.dataset.flagId;
+          const uid = select.value;
+          const techName = select.options[select.selectedIndex].text;
+
+          const updates = uid
+            ? { assignedToUid: uid, assignedToName: techName, assignedAt: firebase.database.ServerValue.TIMESTAMP, status: "assigned", wasReassigned: false }
+            : { assignedToUid: null, assignedToName: null, status: "open" };
+
+          db.ref(`sites/${site}/outOfOrder/${flagId}`).update(updates)
+            .catch((err) => alert("Failed to assign: " + err.message));
+        });
+      });
+    });
+  });
+}
+
+// ===================== OUT-OF-ORDER: MAINTENANCE QUEUE =====================
+function renderMaintenanceQueue(content) {
+  const site = currentUser.site;
+  content.innerHTML = `<div class="card"><p style="color:var(--muted);">Loading assigned units...</p></div>`;
+
+  db.ref(`sites/${site}/outOfOrder`).once("value").then((snap) => {
+    const myFlags = [];
+    if (snap.exists()) {
+      snap.forEach((child) => {
+        const f = child.val();
+        if (f.assignedToUid === currentUser.uid && f.status === "assigned") {
+          myFlags.push({ flagId: child.key, ...f });
+        }
+      });
+    }
+
+    if (!myFlags.length) {
+      content.innerHTML = `<div class="panel-placeholder">No units currently assigned to you.</div>`;
+      return;
+    }
+
+    myFlags.sort((a, b) => (b.assignedAt || 0) - (a.assignedAt || 0));
+
+    content.innerHTML = myFlags.map(f => {
+      const when = f.assignedAt ? new Date(f.assignedAt).toLocaleString() : "—";
+      return `
+        <div class="card" style="margin-bottom:10px;">
+          <strong>${f.unitName}</strong>
+          <div style="color:var(--muted); font-size:0.85rem; margin:6px 0;">${f.reason}${f.notes ? " — " + f.notes : ""}</div>
+          <div style="color:var(--muted); font-size:0.75rem; margin-bottom:12px;">Assigned ${when}</div>
+          <button class="complete-btn" data-flag-id="${f.flagId}" data-unit-key="${f.unitKey}" style="padding:8px 16px; background:var(--success); color:white; border:none; border-radius:6px; cursor:pointer; margin-right:8px;">
+            Mark Completed
+          </button>
+          <button class="needs-repair-btn" data-flag-id="${f.flagId}" style="padding:8px 16px; background:var(--warn); color:white; border:none; border-radius:6px; cursor:pointer;">
+            Still Needs Repair
+          </button>
+        </div>
+      `;
+    }).join("");
+
+    content.querySelectorAll(".complete-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const flagId = btn.dataset.flagId;
+        const unitKey = btn.dataset.unitKey;
+        db.ref(`sites/${site}/outOfOrder/${flagId}`).update({
+          status: "closed",
+          resolvedByUid: currentUser.uid,
+          resolvedByName: `${currentUser.firstName} ${currentUser.lastName}`,
+          resolvedAt: firebase.database.ServerValue.TIMESTAMP
+        })
+        .then(() => db.ref(`sites/${site}/units/${unitKey}/status`).set("ok"))
+        .then(() => renderMaintenanceQueue(content))
+        .catch((err) => alert("Failed to mark completed: " + err.message));
+      });
+    });
+
+    content.querySelectorAll(".needs-repair-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const flagId = btn.dataset.flagId;
+        db.ref(`sites/${site}/outOfOrder/${flagId}`).update({
+          status: "open",
+          assignedToUid: null,
+          assignedToName: null,
+          wasReassigned: true
+        })
+        .then(() => renderMaintenanceQueue(content))
+        .catch((err) => alert("Failed to update: " + err.message));
+      });
+    });
+  });
 }
 
 // ===================== ADMIN PANEL: UNITS CSV IMPORT =====================
