@@ -615,7 +615,7 @@ function renderInventoryItemsAdmin(content) {
       <div class="card">
         <h3 style="color:var(--navy); margin-bottom:14px;">Inventory Items — ${SITES[site]}</h3>
         <p style="color:var(--muted); font-size:0.85rem; margin-bottom:10px;">
-          Inventory is tracked per location group — units sharing the same name (e.g. Male/Female/ADA at "King Loo") share one inventory pool.
+          Inventory is tracked per location group, split separately for Male and Female (units sharing a location name, e.g. "King Loo", share the group — but Male and Female supplies are tracked independently).
         </p>
         <label style="display:block; font-size:0.85rem; color:var(--muted); margin-bottom:6px;">Location group</label>
         <select id="inventory-group-select" style="width:100%; max-width:300px; padding:8px; border:1px solid var(--border); border-radius:6px; margin-bottom:16px;">
@@ -626,16 +626,16 @@ function renderInventoryItemsAdmin(content) {
     `;
 
     const groupSelect = document.getElementById("inventory-group-select");
-    groupSelect.addEventListener("change", () => renderGroupItemsPanel(site, groupSelect.value, groups[groupSelect.value].name));
-    renderGroupItemsPanel(site, groupSelect.value, groups[groupSelect.value].name);
+    groupSelect.addEventListener("change", () => renderGroupItemsPanel(site, groupSelect.value, groups[groupSelect.value].name, "Female"));
+    renderGroupItemsPanel(site, groupSelect.value, groups[groupSelect.value].name, "Female");
   });
 }
 
-function renderGroupItemsPanel(site, groupKey, groupName) {
+function renderGroupItemsPanel(site, groupKey, groupName, sex) {
   const panel = document.getElementById("inventory-group-content");
   panel.innerHTML = `<p style="color:var(--muted);">Loading items...</p>`;
 
-  db.ref(`sites/${site}/groupInventory/${groupKey}/items`).once("value").then((snap) => {
+  db.ref(`sites/${site}/groupInventory/${groupKey}/${sex}/items`).once("value").then((snap) => {
     const items = snap.exists() ? snap.val() : {};
     const rows = Object.entries(items).map(([key, item]) => `
       <tr>
@@ -655,6 +655,10 @@ function renderGroupItemsPanel(site, groupKey, groupName) {
     ).join("");
 
     panel.innerHTML = `
+      <div style="display:flex; gap:8px; margin-bottom:16px;">
+        <button class="sex-tab-btn" data-sex="Female" style="padding:8px 20px; border-radius:6px; border:1px solid var(--border); cursor:pointer; ${sex === "Female" ? "background:var(--navy); color:white;" : "background:white;"}">Female</button>
+        <button class="sex-tab-btn" data-sex="Male" style="padding:8px 20px; border-radius:6px; border:1px solid var(--border); cursor:pointer; ${sex === "Male" ? "background:var(--navy); color:white;" : "background:white;"}">Male</button>
+      </div>
       <p style="color:var(--muted); font-size:0.8rem; margin-bottom:6px;">Quick-add suggestions:</p>
       <div style="margin-bottom:16px;">${chipButtons}</div>
       <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:16px;">
@@ -675,6 +679,10 @@ function renderGroupItemsPanel(site, groupKey, groupName) {
       </table>
     `;
 
+    panel.querySelectorAll(".sex-tab-btn").forEach((btn) => {
+      btn.addEventListener("click", () => renderGroupItemsPanel(site, groupKey, groupName, btn.dataset.sex));
+    });
+
     function addItem(name, parLevel) {
       const statusEl = document.getElementById("item-add-status");
       if (!name.trim()) {
@@ -683,8 +691,8 @@ function renderGroupItemsPanel(site, groupKey, groupName) {
         return;
       }
       const key = name.trim().replace(/[.#$/\[\]]/g, "_");
-      db.ref(`sites/${site}/groupInventory/${groupKey}/items/${key}`).set({ name: name.trim(), parLevel: parseFloat(parLevel) || 0 })
-        .then(() => renderGroupItemsPanel(site, groupKey, groupName))
+      db.ref(`sites/${site}/groupInventory/${groupKey}/${sex}/items/${key}`).set({ name: name.trim(), parLevel: parseFloat(parLevel) || 0 })
+        .then(() => renderGroupItemsPanel(site, groupKey, groupName, sex))
         .catch((err) => {
           statusEl.style.color = "var(--danger)";
           statusEl.textContent = "Failed to add: " + err.message;
@@ -702,8 +710,8 @@ function renderGroupItemsPanel(site, groupKey, groupName) {
     panel.querySelectorAll(".delete-item-btn").forEach((btn) => {
       btn.addEventListener("click", () => {
         if (!confirm("Remove this item from the inventory list?")) return;
-        db.ref(`sites/${site}/groupInventory/${groupKey}/items/${btn.dataset.key}`).remove()
-          .then(() => renderGroupItemsPanel(site, groupKey, groupName))
+        db.ref(`sites/${site}/groupInventory/${groupKey}/${sex}/items/${btn.dataset.key}`).remove()
+          .then(() => renderGroupItemsPanel(site, groupKey, groupName, sex))
           .catch((err) => alert("Failed to remove: " + err.message));
       });
     });
@@ -744,26 +752,35 @@ function renderGroupCountForm(site, groupKey, groupName, type) {
   const panel = document.getElementById("count-group-content");
   panel.innerHTML = `<p style="color:var(--muted);">Loading items...</p>`;
 
-  db.ref(`sites/${site}/groupInventory/${groupKey}/items`).once("value").then((snap) => {
-    if (!snap.exists()) {
+  Promise.all([
+    db.ref(`sites/${site}/groupInventory/${groupKey}/Female/items`).once("value"),
+    db.ref(`sites/${site}/groupInventory/${groupKey}/Male/items`).once("value")
+  ]).then(([femaleSnap, maleSnap]) => {
+    const femaleItems = femaleSnap.exists() ? femaleSnap.val() : {};
+    const maleItems = maleSnap.exists() ? maleSnap.val() : {};
+
+    if (!Object.keys(femaleItems).length && !Object.keys(maleItems).length) {
       panel.innerHTML = `<p style="color:var(--muted);">No inventory items set up for ${groupName} yet. Ask your Super User to add items in the Pre-Event tab.</p>`;
       return;
     }
-    const items = snap.val();
+
     const inputLabel = type === "addition" ? "Cases brought" : "Case count";
-    const rows = Object.entries(items).map(([key, item]) => `
-      <div style="display:flex; align-items:center; justify-content:space-between; padding:10px 0; border-bottom:1px solid var(--border);">
-        <div>
-          <div style="font-weight:600;">${item.name}</div>
-          <div style="color:var(--muted); font-size:0.75rem;">Par level: ${item.parLevel} cases</div>
+
+    function sectionRows(items, sex) {
+      return Object.entries(items).map(([key, item]) => `
+        <div style="display:flex; align-items:center; justify-content:space-between; padding:10px 0; border-bottom:1px solid var(--border);">
+          <div>
+            <div style="font-weight:600;">${item.name}</div>
+            <div style="color:var(--muted); font-size:0.75rem;">Par level: ${item.parLevel} cases</div>
+          </div>
+          <div style="text-align:right;">
+            <label style="display:block; font-size:0.7rem; color:var(--muted);">${inputLabel}</label>
+            <input type="number" class="count-input" data-sex="${sex}" data-key="${key}" data-name="${item.name}" step="0.25" min="0" placeholder="0.00"
+              style="width:100px; padding:8px; border:1px solid var(--border); border-radius:6px; text-align:right;">
+          </div>
         </div>
-        <div style="text-align:right;">
-          <label style="display:block; font-size:0.7rem; color:var(--muted);">${inputLabel}</label>
-          <input type="number" class="count-input" data-key="${key}" data-name="${item.name}" step="0.25" min="0" placeholder="0.00"
-            style="width:100px; padding:8px; border:1px solid var(--border); border-radius:6px; text-align:right;">
-        </div>
-      </div>
-    `).join("");
+      `).join("");
+    }
 
     panel.innerHTML = `
       <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">
@@ -771,7 +788,8 @@ function renderGroupCountForm(site, groupKey, groupName, type) {
           ? "Log how many cases of each item you brought/restocked (quarter-case increments, e.g. .25, .50, .75, 1.00...)."
           : `Enter ${type} case count for each item (in quarter-case increments, e.g. .25, .50, .75, 1.00, 1.25...).`}
       </p>
-      ${rows}
+      ${Object.keys(femaleItems).length ? `<h4 style="color:var(--navy); margin-bottom:8px;">Female</h4>${sectionRows(femaleItems, "Female")}` : ""}
+      ${Object.keys(maleItems).length ? `<h4 style="color:var(--navy); margin:16px 0 8px;">Male</h4>${sectionRows(maleItems, "Male")}` : ""}
       <button id="submit-count-btn" style="margin-top:16px; padding:10px 20px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer;">
         Submit
       </button>
@@ -780,12 +798,12 @@ function renderGroupCountForm(site, groupKey, groupName, type) {
 
     document.getElementById("submit-count-btn").addEventListener("click", () => {
       const statusEl = document.getElementById("count-submit-status");
-      const counts = {};
+      const countsBySex = { Female: {}, Male: {} };
       let hasAny = false;
       panel.querySelectorAll(".count-input").forEach((input) => {
         const val = input.value.trim();
         if (val !== "") {
-          counts[input.dataset.key] = { name: input.dataset.name, count: parseFloat(val) };
+          countsBySex[input.dataset.sex][input.dataset.key] = { name: input.dataset.name, count: parseFloat(val) };
           hasAny = true;
         }
       });
@@ -796,14 +814,21 @@ function renderGroupCountForm(site, groupKey, groupName, type) {
         return;
       }
 
-      db.ref(`sites/${site}/groupInventory/${groupKey}/counts`).push({
-        type,
-        countedByUid: currentUser.uid,
-        countedByName: `${currentUser.firstName} ${currentUser.lastName}`,
-        countedByRole: currentUser.role,
-        timestamp: firebase.database.ServerValue.TIMESTAMP,
-        counts
-      }).then(() => {
+      const writes = [];
+      ["Female", "Male"].forEach((sex) => {
+        if (Object.keys(countsBySex[sex]).length) {
+          writes.push(db.ref(`sites/${site}/groupInventory/${groupKey}/${sex}/counts`).push({
+            type,
+            countedByUid: currentUser.uid,
+            countedByName: `${currentUser.firstName} ${currentUser.lastName}`,
+            countedByRole: currentUser.role,
+            timestamp: firebase.database.ServerValue.TIMESTAMP,
+            counts: countsBySex[sex]
+          }));
+        }
+      });
+
+      Promise.all(writes).then(() => {
         statusEl.style.color = "var(--success)";
         statusEl.textContent = "Submitted.";
       }).catch((err) => {
@@ -861,42 +886,76 @@ function renderGroupCountHistory(site, groupKey, groupName) {
   panel.innerHTML = `<div class="card"><p style="color:var(--muted);">Loading...</p></div>`;
 
   Promise.all([
-    db.ref(`sites/${site}/groupInventory/${groupKey}/items`).once("value"),
-    db.ref(`sites/${site}/groupInventory/${groupKey}/counts`).once("value")
-  ]).then(([itemsSnap, countsSnap]) => {
-    const items = itemsSnap.exists() ? itemsSnap.val() : {};
-    const entries = [];
-    if (countsSnap.exists()) countsSnap.forEach((child) => entries.push(child.val()));
+    db.ref(`sites/${site}/groupInventory/${groupKey}/Female/items`).once("value"),
+    db.ref(`sites/${site}/groupInventory/${groupKey}/Female/counts`).once("value"),
+    db.ref(`sites/${site}/groupInventory/${groupKey}/Male/items`).once("value"),
+    db.ref(`sites/${site}/groupInventory/${groupKey}/Male/counts`).once("value")
+  ]).then(([femaleItemsSnap, femaleCountsSnap, maleItemsSnap, maleCountsSnap]) => {
+    function buildSummary(itemsSnap, countsSnap) {
+      const items = itemsSnap.exists() ? itemsSnap.val() : {};
+      const entries = [];
+      if (countsSnap.exists()) countsSnap.forEach((child) => entries.push(child.val()));
 
-    // Compute latest count of each type, per item, for the reorder summary
-    const latest = {}; // itemKey -> { beginning, addition (sum), ending }
-    Object.keys(items).forEach((key) => { latest[key] = { beginning: null, additionSum: 0, ending: null }; });
-    entries.forEach((entry) => {
-      Object.entries(entry.counts || {}).forEach(([key, c]) => {
-        if (!latest[key]) latest[key] = { beginning: null, additionSum: 0, ending: null };
-        if (entry.type === "beginning") latest[key].beginning = c.count;
-        if (entry.type === "addition") latest[key].additionSum += c.count;
-        if (entry.type === "ending") latest[key].ending = c.count;
+      const latest = {};
+      Object.keys(items).forEach((key) => { latest[key] = { beginning: null, additionSum: 0, ending: null }; });
+      entries.forEach((entry) => {
+        Object.entries(entry.counts || {}).forEach(([key, c]) => {
+          if (!latest[key]) latest[key] = { beginning: null, additionSum: 0, ending: null };
+          if (entry.type === "beginning") latest[key].beginning = c.count;
+          if (entry.type === "addition") latest[key].additionSum += c.count;
+          if (entry.type === "ending") latest[key].ending = c.count;
+        });
       });
-    });
 
-    const summaryRows = Object.entries(items).map(([key, item]) => {
-      const l = latest[key] || { beginning: null, additionSum: 0, ending: null };
-      const orderQty = l.ending !== null ? Math.max(0, item.parLevel - l.ending) : null;
+      const summaryRows = Object.entries(items).map(([key, item]) => {
+        const l = latest[key] || { beginning: null, additionSum: 0, ending: null };
+        const orderQty = l.ending !== null ? Math.max(0, item.parLevel - l.ending) : null;
+        return `
+          <tr>
+            <td style="padding:8px; border-bottom:1px solid var(--border);">${item.name}</td>
+            <td style="padding:8px; border-bottom:1px solid var(--border);">${item.parLevel}</td>
+            <td style="padding:8px; border-bottom:1px solid var(--border);">${l.beginning ?? "—"}</td>
+            <td style="padding:8px; border-bottom:1px solid var(--border);">${l.additionSum || "—"}</td>
+            <td style="padding:8px; border-bottom:1px solid var(--border);">${l.ending ?? "—"}</td>
+            <td style="padding:8px; border-bottom:1px solid var(--border); font-weight:600; ${orderQty > 0 ? "color:var(--danger);" : ""}">${orderQty !== null ? orderQty : "—"}</td>
+          </tr>
+        `;
+      }).join("");
+
+      return { summaryRows, entries, hasItems: Object.keys(items).length > 0 };
+    }
+
+    const female = buildSummary(femaleItemsSnap, femaleCountsSnap);
+    const male = buildSummary(maleItemsSnap, maleCountsSnap);
+
+    function summaryTable(label, result) {
+      if (!result.hasItems) return "";
       return `
-        <tr>
-          <td style="padding:8px; border-bottom:1px solid var(--border);">${item.name}</td>
-          <td style="padding:8px; border-bottom:1px solid var(--border);">${item.parLevel}</td>
-          <td style="padding:8px; border-bottom:1px solid var(--border);">${l.beginning ?? "—"}</td>
-          <td style="padding:8px; border-bottom:1px solid var(--border);">${l.additionSum || "—"}</td>
-          <td style="padding:8px; border-bottom:1px solid var(--border);">${l.ending ?? "—"}</td>
-          <td style="padding:8px; border-bottom:1px solid var(--border); font-weight:600; ${orderQty > 0 ? "color:var(--danger);" : ""}">${orderQty !== null ? orderQty : "—"}</td>
-        </tr>
+        <div class="card">
+          <h3 style="color:var(--navy); margin-bottom:14px;">${groupName} — ${label} — Current Status</h3>
+          <table style="width:100%; border-collapse:collapse; font-size:0.85rem;">
+            <thead>
+              <tr style="text-align:left; color:var(--muted);">
+                <th style="padding:8px; border-bottom:2px solid var(--border);">Item</th>
+                <th style="padding:8px; border-bottom:2px solid var(--border);">Par</th>
+                <th style="padding:8px; border-bottom:2px solid var(--border);">Beginning</th>
+                <th style="padding:8px; border-bottom:2px solid var(--border);">Additions</th>
+                <th style="padding:8px; border-bottom:2px solid var(--border);">Ending</th>
+                <th style="padding:8px; border-bottom:2px solid var(--border);">Order Qty</th>
+              </tr>
+            </thead>
+            <tbody>${result.summaryRows}</tbody>
+          </table>
+        </div>
       `;
-    }).join("");
+    }
 
-    entries.reverse();
-    const historyHtml = entries.map(entry => {
+    const combinedEntries = [
+      ...female.entries.map(e => ({ ...e, sex: "Female" })),
+      ...male.entries.map(e => ({ ...e, sex: "Male" }))
+    ].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+
+    const historyHtml = combinedEntries.map(entry => {
       const when = entry.timestamp ? new Date(entry.timestamp).toLocaleString() : "—";
       const typeInfo = COUNT_TYPE_LABELS[entry.type] || { label: entry.type, bg: "#eee", color: "#666" };
       const itemRows = Object.entries(entry.counts || {}).map(([key, c]) =>
@@ -908,7 +967,7 @@ function renderGroupCountHistory(site, groupKey, groupName) {
       return `
         <div class="card" style="margin-bottom:10px;">
           <div style="display:flex; justify-content:space-between; align-items:baseline;">
-            <div style="font-weight:600; margin-bottom:4px;">${entry.countedByName}</div>
+            <div style="font-weight:600; margin-bottom:4px;">${entry.countedByName} — ${entry.sex}</div>
             <span style="font-size:0.75rem; padding:2px 8px; border-radius:10px; background:${typeInfo.bg}; color:${typeInfo.color};">${typeInfo.label}</span>
           </div>
           <div style="color:var(--muted); font-size:0.75rem; margin-bottom:10px;">${when}</div>
@@ -918,22 +977,9 @@ function renderGroupCountHistory(site, groupKey, groupName) {
     }).join("");
 
     panel.innerHTML = `
-      <div class="card">
-        <h3 style="color:var(--navy); margin-bottom:14px;">${groupName} — Current Status</h3>
-        <table style="width:100%; border-collapse:collapse; font-size:0.85rem;">
-          <thead>
-            <tr style="text-align:left; color:var(--muted);">
-              <th style="padding:8px; border-bottom:2px solid var(--border);">Item</th>
-              <th style="padding:8px; border-bottom:2px solid var(--border);">Par</th>
-              <th style="padding:8px; border-bottom:2px solid var(--border);">Beginning</th>
-              <th style="padding:8px; border-bottom:2px solid var(--border);">Additions</th>
-              <th style="padding:8px; border-bottom:2px solid var(--border);">Ending</th>
-              <th style="padding:8px; border-bottom:2px solid var(--border);">Order Qty</th>
-            </tr>
-          </thead>
-          <tbody>${summaryRows || `<tr><td colspan="6" style="padding:8px; color:var(--muted);">No items set up yet.</td></tr>`}</tbody>
-        </table>
-      </div>
+      ${summaryTable("Female", female)}
+      ${summaryTable("Male", male)}
+      ${!female.hasItems && !male.hasItems ? `<div class="panel-placeholder">No items set up yet for ${groupName}.</div>` : ""}
       <h4 style="color:var(--navy); margin:16px 0 10px;">History</h4>
       ${historyHtml || `<p style="color:var(--muted);">No counts logged yet for ${groupName}.</p>`}
     `;
@@ -975,13 +1021,22 @@ function renderRequestItemPicker(site, groupKey, groupName) {
   const panel = document.getElementById("request-items-content");
   panel.innerHTML = `<p style="color:var(--muted);">Loading items...</p>`;
 
-  db.ref(`sites/${site}/groupInventory/${groupKey}/items`).once("value").then((snap) => {
-    if (!snap.exists()) {
+  Promise.all([
+    db.ref(`sites/${site}/groupInventory/${groupKey}/Female/items`).once("value"),
+    db.ref(`sites/${site}/groupInventory/${groupKey}/Male/items`).once("value")
+  ]).then(([femaleSnap, maleSnap]) => {
+    const femaleItems = femaleSnap.exists() ? femaleSnap.val() : {};
+    const maleItems = maleSnap.exists() ? maleSnap.val() : {};
+
+    if (!Object.keys(femaleItems).length && !Object.keys(maleItems).length) {
       panel.innerHTML = `<p style="color:var(--muted);">No inventory items set up for ${groupName} yet.</p>`;
       return;
     }
-    const items = snap.val();
-    const itemOptions = Object.entries(items).map(([key, item]) => `<option value="${key}">${item.name}</option>`).join("");
+
+    const itemOptions = [
+      ...Object.entries(femaleItems).map(([key, item]) => `<option value="Female:${key}">${item.name} (Female)</option>`),
+      ...Object.entries(maleItems).map(([key, item]) => `<option value="Male:${key}">${item.name} (Male)</option>`)
+    ].join("");
 
     panel.innerHTML = `
       <label style="display:block; font-size:0.85rem; color:var(--muted); margin-bottom:6px;">Item</label>
@@ -997,23 +1052,23 @@ function renderRequestItemPicker(site, groupKey, groupName) {
     `;
 
     document.getElementById("submit-request-btn").addEventListener("click", () => {
-      const itemKey = document.getElementById("request-item-select").value;
-      const itemName = items[itemKey].name;
+      const [sex, itemKey] = document.getElementById("request-item-select").value.split(":");
+      const itemName = (sex === "Female" ? femaleItems : maleItems)[itemKey].name;
       const note = document.getElementById("request-note-input").value.trim();
       const statusEl = document.getElementById("request-submit-status");
 
       db.ref(`sites/${site}/supplyRequests`).push({
-        groupKey, groupName, itemKey, itemName, note,
+        groupKey, groupName, sex, itemKey, itemName, note,
         requestedByUid: currentUser.uid,
         requestedByName: `${currentUser.firstName} ${currentUser.lastName}`,
         requestedAt: firebase.database.ServerValue.TIMESTAMP,
         status: "open"
       }).then(() => {
         // Flag the item so admins see a "consider raising par" suggestion
-        return db.ref(`sites/${site}/groupInventory/${groupKey}/items/${itemKey}/parRaisedSuggested`).set(true);
+        return db.ref(`sites/${site}/groupInventory/${groupKey}/${sex}/items/${itemKey}/parRaisedSuggested`).set(true);
       }).then(() => {
         statusEl.style.color = "var(--success)";
-        statusEl.textContent = `Request sent — Maintenance has been notified about ${itemName} at ${groupName}.`;
+        statusEl.textContent = `Request sent — Maintenance has been notified about ${itemName} (${sex}) at ${groupName}.`;
         document.getElementById("request-note-input").value = "";
       }).catch((err) => {
         statusEl.style.color = "var(--danger)";
@@ -1038,15 +1093,19 @@ function renderInventoryOrders(content) {
     const groupKeys = Object.keys(groups);
     const groupFetches = groupKeys.map(key =>
       Promise.all([
-        db.ref(`sites/${site}/groupInventory/${key}/items`).once("value"),
-        db.ref(`sites/${site}/groupInventory/${key}/counts`).once("value")
-      ]).then(([itemsSnap, countsSnap]) => ({ key, name: groups[key].name, itemsSnap, countsSnap }))
+        db.ref(`sites/${site}/groupInventory/${key}/Female/items`).once("value"),
+        db.ref(`sites/${site}/groupInventory/${key}/Female/counts`).once("value"),
+        db.ref(`sites/${site}/groupInventory/${key}/Male/items`).once("value"),
+        db.ref(`sites/${site}/groupInventory/${key}/Male/counts`).once("value")
+      ]).then(([femaleItemsSnap, femaleCountsSnap, maleItemsSnap, maleCountsSnap]) =>
+        ({ key, name: groups[key].name, femaleItemsSnap, femaleCountsSnap, maleItemsSnap, maleCountsSnap })
+      )
     );
 
     Promise.all(groupFetches).then((groupResults) => {
       const orderRows = [];
 
-      groupResults.forEach(({ key, name, itemsSnap, countsSnap }) => {
+      function collectOrders(groupKey, groupName, sex, itemsSnap, countsSnap) {
         if (!itemsSnap.exists()) return;
         const items = itemsSnap.val();
         const latestEnding = {};
@@ -1062,9 +1121,14 @@ function renderInventoryOrders(content) {
           const ending = latestEnding[itemKey];
           const orderQty = ending !== undefined ? Math.max(0, item.parLevel - ending) : null;
           if (orderQty !== null && orderQty > 0) {
-            orderRows.push({ groupKey: key, groupName: name, itemKey, itemName: item.name, parLevel: item.parLevel, ending, orderQty });
+            orderRows.push({ groupKey, groupName, sex, itemKey, itemName: item.name, parLevel: item.parLevel, ending, orderQty });
           }
         });
+      }
+
+      groupResults.forEach(({ key, name, femaleItemsSnap, femaleCountsSnap, maleItemsSnap, maleCountsSnap }) => {
+        collectOrders(key, name, "Female", femaleItemsSnap, femaleCountsSnap);
+        collectOrders(key, name, "Male", maleItemsSnap, maleCountsSnap);
       });
 
       const requestsHtml = openRequests.length ? `
@@ -1073,7 +1137,7 @@ function renderInventoryOrders(content) {
           ${openRequests.map(r => `
             <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid var(--border);">
               <div>
-                <strong>${r.itemName}</strong> — ${r.groupName}
+                <strong>${r.itemName}</strong> — ${r.groupName} (${r.sex})
                 <div style="color:var(--muted); font-size:0.75rem;">Requested by ${r.requestedByName}${r.note ? ": " + r.note : ""}</div>
               </div>
               <button class="fulfill-request-btn" data-req-id="${r.reqId}" style="padding:6px 12px; background:var(--success); color:white; border:none; border-radius:6px; cursor:pointer; font-size:0.8rem;">Mark Fulfilled</button>
@@ -1089,6 +1153,7 @@ function renderInventoryOrders(content) {
             <thead>
               <tr style="text-align:left; color:var(--muted);">
                 <th style="padding:8px; border-bottom:2px solid var(--border);">Location Group</th>
+                <th style="padding:8px; border-bottom:2px solid var(--border);">Sex</th>
                 <th style="padding:8px; border-bottom:2px solid var(--border);">Item</th>
                 <th style="padding:8px; border-bottom:2px solid var(--border);">Par</th>
                 <th style="padding:8px; border-bottom:2px solid var(--border);">Ending</th>
@@ -1099,6 +1164,7 @@ function renderInventoryOrders(content) {
               ${orderRows.map(r => `
                 <tr>
                   <td style="padding:8px; border-bottom:1px solid var(--border);">${r.groupName}</td>
+                  <td style="padding:8px; border-bottom:1px solid var(--border);">${r.sex}</td>
                   <td style="padding:8px; border-bottom:1px solid var(--border);">${r.itemName}</td>
                   <td style="padding:8px; border-bottom:1px solid var(--border);">${r.parLevel}</td>
                   <td style="padding:8px; border-bottom:1px solid var(--border);">${r.ending}</td>
@@ -1118,7 +1184,7 @@ function renderInventoryOrders(content) {
       content.querySelectorAll(".fulfill-request-btn").forEach((btn) => {
         btn.addEventListener("click", () => {
           const req = openRequests.find(r => r.reqId === btn.dataset.reqId);
-          const qtyStr = prompt(`How many cases of "${req.itemName}" were delivered to ${req.groupName}?`, "1");
+          const qtyStr = prompt(`How many cases of "${req.itemName}" (${req.sex}) were delivered to ${req.groupName}?`, "1");
           if (qtyStr === null) return; // cancelled
           const qty = parseFloat(qtyStr);
           if (isNaN(qty) || qty <= 0) {
@@ -1126,7 +1192,7 @@ function renderInventoryOrders(content) {
             return;
           }
 
-          db.ref(`sites/${site}/groupInventory/${req.groupKey}/counts`).push({
+          db.ref(`sites/${site}/groupInventory/${req.groupKey}/${req.sex}/counts`).push({
             type: "addition",
             countedByUid: currentUser.uid,
             countedByName: `${currentUser.firstName} ${currentUser.lastName}`,
@@ -1148,7 +1214,7 @@ function renderInventoryOrders(content) {
       const emailBtn = document.getElementById("email-order-btn");
       if (emailBtn) {
         emailBtn.addEventListener("click", () => {
-          const bodyLines = orderRows.map(r => `${r.groupName} — ${r.itemName}: order ${r.orderQty} cases (par ${r.parLevel}, ending ${r.ending})`);
+          const bodyLines = orderRows.map(r => `${r.groupName} (${r.sex}) — ${r.itemName}: order ${r.orderQty} cases (par ${r.parLevel}, ending ${r.ending})`);
           const subject = encodeURIComponent(`Privy Check Order — ${SITES[site]}`);
           const body = encodeURIComponent(`Order needed for ${SITES[site]}:\n\n${bodyLines.join("\n")}`);
           window.location.href = `mailto:?subject=${subject}&body=${body}`;
@@ -1249,6 +1315,19 @@ function renderAdminPanel(content) {
         Add Staff Member
       </button>
       <div id="add-staff-status" style="margin-top:12px; font-size:0.85rem;"></div>
+    </div>
+    <div class="card">
+      <h3 style="color:var(--navy); margin-bottom:14px;">Import Order Guide (XLSX)</h3>
+      <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">
+        Upload a spreadsheet in the standard Order Guide format (one sheet per location, "Womens"/"Mens" sections listing item name and Par). You'll map each sheet to an existing location group before anything is saved — sheet names don't have to match exactly.
+      </p>
+      <input type="file" id="order-guide-file-input" accept=".xlsx,.xls" style="margin-bottom:14px;">
+      <br>
+      <button id="order-guide-parse-btn" style="padding:10px 18px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer;">
+        Parse File
+      </button>
+      <div id="order-guide-status" style="margin-top:12px; font-size:0.85rem;"></div>
+      <div id="order-guide-mapping-content"></div>
     </div>
     <div class="card">
       <h3 style="color:var(--navy); margin-bottom:14px;">Staff — <span id="staff-table-site-label"></span></h3>
@@ -1354,9 +1433,48 @@ function renderAdminPanel(content) {
     });
   });
 
+  document.getElementById("order-guide-parse-btn").addEventListener("click", () => {
+    const fileInput = document.getElementById("order-guide-file-input");
+    const statusEl = document.getElementById("order-guide-status");
+    const site = siteSelect.value;
+
+    if (!fileInput.files.length) {
+      statusEl.style.color = "var(--danger)";
+      statusEl.textContent = "Choose an XLSX file first.";
+      return;
+    }
+
+    statusEl.style.color = "var(--muted)";
+    statusEl.textContent = "Parsing...";
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const workbook = XLSX.read(e.target.result, { type: "array" });
+        const parsedSheets = workbook.SheetNames.map((sheetName) => {
+          const grid = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: null });
+          return { sheetName, items: parseOrderGuideSheet(grid) };
+        }).filter(s => s.items.Female.length || s.items.Male.length);
+
+        if (!parsedSheets.length) {
+          statusEl.style.color = "var(--danger)";
+          statusEl.textContent = "Couldn't find any 'Womens'/'Mens' sections in this file. Check the format.";
+          return;
+        }
+
+        statusEl.style.color = "var(--success)";
+        statusEl.textContent = `Parsed ${parsedSheets.length} sheet(s). Map each to a location group below, then import.`;
+        renderOrderGuideMapping(site, parsedSheets);
+      } catch (err) {
+        statusEl.style.color = "var(--danger)";
+        statusEl.textContent = "Failed to parse file: " + err.message;
+      }
+    };
+    reader.readAsArrayBuffer(fileInput.files[0]);
+  });
+
   document.getElementById("csv-template-btn").addEventListener("click", () => {
     const site = siteSelect.value;
-    const csvContent = "unit_name,location,type\nPrivy 1,Main Gate,Male\nPrivy 2,Main Gate,Female\nPrivy 3,Main Gate,ADA\n";
     const blob = new Blob([csvContent], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -1553,6 +1671,148 @@ function renderAdminPanel(content) {
           statusEl.style.color = "var(--danger)";
           statusEl.textContent = "Could not parse CSV: " + err.message;
         }
+      });
+    });
+  });
+}
+
+// ===================== ORDER GUIDE XLSX IMPORT: PARSING =====================
+// Reads one sheet's raw grid (array of arrays) and pulls out item name + par
+// level for the "Womens" and "Mens" sections. Ignores the unit column and all
+// the weekend Beginning/Additions/Ending/Usage columns — those are historical
+// scratch data in the workbook, not something we need to import.
+function parseOrderGuideSheet(grid) {
+  const result = { Female: [], Male: [] };
+  let currentSection = null; // "Female" | "Male" | null
+
+  for (const row of grid) {
+    const cellA = row[0] !== undefined && row[0] !== null ? String(row[0]).trim() : "";
+    const cellB = row[1] !== undefined && row[1] !== null ? String(row[1]).trim() : "";
+    const cellC = row[2];
+
+    if (/^womens?$/i.test(cellA)) { currentSection = "Female"; continue; }
+    if (/^mens?$/i.test(cellA)) { currentSection = "Male"; continue; }
+
+    if (!currentSection) continue;
+    if (!cellA) continue; // blank name row — end of this section's items, or stray totals row
+    if (typeof cellC !== "number") continue; // par must be a real number
+
+    result[currentSection].push({ name: cellA, unit: cellB, parLevel: cellC });
+  }
+
+  return result;
+}
+
+// ===================== ORDER GUIDE XLSX IMPORT: MAPPING UI =====================
+function renderOrderGuideMapping(site, parsedSheets) {
+  const container = document.getElementById("order-guide-mapping-content");
+  container.innerHTML = `<p style="color:var(--muted); margin-top:14px;">Loading location groups...</p>`;
+
+  getLocationGroups(site).then((groups) => {
+    const groupKeys = Object.keys(groups);
+    if (!groupKeys.length) {
+      container.innerHTML = `<div class="panel-placeholder" style="margin-top:14px;">No location groups exist yet for ${SITES[site]} — import units first.</div>`;
+      return;
+    }
+    const groupOptionsHtml = (selectedGuess) => groupKeys.map(key => {
+      const selected = key === selectedGuess ? "selected" : "";
+      return `<option value="${key}" ${selected}>${groups[key].name}</option>`;
+    }).join("") + `<option value="__skip__">— Skip this sheet —</option>`;
+
+    // Best-effort guess: match sheet name to a group name, tolerant of minor spelling differences
+    function guessGroup(sheetName) {
+      const normalize = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+      const target = normalize(sheetName);
+      let best = null, bestScore = 0;
+      groupKeys.forEach((key) => {
+        const candidate = normalize(groups[key].name);
+        let score = 0;
+        const minLen = Math.min(target.length, candidate.length);
+        for (let i = 0; i < minLen; i++) if (target[i] === candidate[i]) score++;
+        if (target === candidate) score += 100;
+        if (score > bestScore) { bestScore = score; best = key; }
+      });
+      return best;
+    }
+
+    const rowsHtml = parsedSheets.map((sheet, i) => {
+      const guess = guessGroup(sheet.sheetName);
+      return `
+        <div class="card" style="margin-top:14px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+            <div>
+              <strong>${sheet.sheetName}</strong>
+              <div style="color:var(--muted); font-size:0.8rem;">
+                ${sheet.items.Female.length} Female item(s), ${sheet.items.Male.length} Male item(s) found
+              </div>
+            </div>
+            <div>
+              <label style="display:block; font-size:0.75rem; color:var(--muted); margin-bottom:4px;">Maps to</label>
+              <select class="order-guide-group-select" data-sheet-index="${i}" style="padding:6px; border:1px solid var(--border); border-radius:6px;">
+                ${groupOptionsHtml(guess)}
+              </select>
+            </div>
+          </div>
+          <details>
+            <summary style="cursor:pointer; color:var(--muted); font-size:0.8rem;">Preview items</summary>
+            <div style="margin-top:8px; font-size:0.85rem;">
+              ${sheet.items.Female.length ? `<div style="font-weight:600; margin-top:6px;">Female</div>` + sheet.items.Female.map(it => `<div>${it.name} — par ${it.parLevel}</div>`).join("") : ""}
+              ${sheet.items.Male.length ? `<div style="font-weight:600; margin-top:6px;">Male</div>` + sheet.items.Male.map(it => `<div>${it.name} — par ${it.parLevel}</div>`).join("") : ""}
+            </div>
+          </details>
+        </div>
+      `;
+    }).join("");
+
+    container.innerHTML = `
+      ${rowsHtml}
+      <p style="color:var(--muted); font-size:0.85rem; margin-top:14px;">
+        Importing <strong>replaces</strong> the Female/Male item lists for each mapped group with what's parsed here.
+      </p>
+      <button id="order-guide-commit-btn" style="margin-top:8px; padding:10px 20px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer;">
+        Import Mapped Sheets
+      </button>
+      <div id="order-guide-commit-status" style="margin-top:12px; font-size:0.85rem;"></div>
+    `;
+
+    document.getElementById("order-guide-commit-btn").addEventListener("click", () => {
+      const statusEl = document.getElementById("order-guide-commit-status");
+      const mappings = [];
+      container.querySelectorAll(".order-guide-group-select").forEach((select) => {
+        const idx = parseInt(select.dataset.sheetIndex, 10);
+        if (select.value !== "__skip__") mappings.push({ groupKey: select.value, sheet: parsedSheets[idx] });
+      });
+
+      if (!mappings.length) {
+        statusEl.style.color = "var(--danger)";
+        statusEl.textContent = "Nothing mapped — every sheet is set to skip.";
+        return;
+      }
+
+      if (!confirm(`Import ${mappings.length} sheet(s)? This replaces the current Female/Male item lists for each mapped group.`)) return;
+
+      statusEl.style.color = "var(--muted)";
+      statusEl.textContent = "Importing...";
+
+      const writes = [];
+      mappings.forEach(({ groupKey, sheet }) => {
+        ["Female", "Male"].forEach((sex) => {
+          if (!sheet.items[sex].length) return;
+          const itemsObj = {};
+          sheet.items[sex].forEach((it) => {
+            const key = it.name.replace(/[.#$/\[\]]/g, "_");
+            itemsObj[key] = { name: it.name, parLevel: it.parLevel };
+          });
+          writes.push(db.ref(`sites/${site}/groupInventory/${groupKey}/${sex}/items`).set(itemsObj));
+        });
+      });
+
+      Promise.all(writes).then(() => {
+        statusEl.style.color = "var(--success)";
+        statusEl.textContent = `Imported ${mappings.length} sheet(s) successfully.`;
+      }).catch((err) => {
+        statusEl.style.color = "var(--danger)";
+        statusEl.textContent = "Import failed: " + err.message;
       });
     });
   });
