@@ -31,7 +31,8 @@ const ROLES = {
   user: { label: "User", scope: "site" },
   maintenance: { label: "Maintenance", scope: "site" },
   preevent: { label: "Pre-Event", scope: "site" },
-  executive: { label: "Executive", scope: "all" }
+  executive: { label: "Executive", scope: "all" },
+  inventory: { label: "Inventory", scope: "site" }
 };
 
 // Default suggested out-of-order reasons (editable by Superadmin in Admin Panel later)
@@ -232,7 +233,8 @@ function renderTabsForRole(role) {
       { id: "pre-event", label: "Pre-Event" },
       { id: "during-event", label: "During Event" },
       { id: "closing", label: "Closing" },
-      { id: "out-of-order", label: "Flag a Unit" }
+      { id: "out-of-order", label: "Flag a Unit" },
+      { id: "request-supplies", label: "Request Supplies" }
     ];
   } else if (role === "maintenance") {
     tabs = [
@@ -246,6 +248,10 @@ function renderTabsForRole(role) {
   } else if (role === "executive") {
     tabs = [
       { id: "reports", label: "Reports" }
+    ];
+  } else if (role === "inventory") {
+    tabs = [
+      { id: "orders", label: "Orders" }
     ];
   }
 
@@ -283,6 +289,8 @@ function renderTabContent(tabId) {
   if (tabId === "pre-event") {
     if (currentUser.role === "superadmin" || currentUser.role === "superuser") {
       renderInventoryItemsAdmin(content);
+    } else if (currentUser.role === "user" || currentUser.role === "preevent") {
+      renderInventoryCountEntry(content, "beginning", "Beginning Inventory Count");
     } else {
       content.innerHTML = `<div class="panel-placeholder"><h3 style="margin-bottom:8px;color:var(--navy)">Pre-Event Task List</h3><p>Checklist tasks coming in a future build pass.</p></div>`;
     }
@@ -291,7 +299,7 @@ function renderTabContent(tabId) {
 
   if (tabId === "closing") {
     if (currentUser.role === "user") {
-      renderInventoryCountEntry(content, "closing", "Closing Inventory Count");
+      renderInventoryCountEntry(content, "ending", "Ending Inventory Count");
     } else if (currentUser.role === "superadmin" || currentUser.role === "superuser") {
       renderInventoryCountHistory(content);
     } else {
@@ -301,14 +309,22 @@ function renderTabContent(tabId) {
   }
 
   if (tabId === "supplies") {
-    renderInventoryCountEntry(content, "maintenance-restock", "Log Supplies Brought");
+    renderInventoryCountEntry(content, "addition", "Log Supplies Brought");
+    return;
+  }
+
+  if (tabId === "request-supplies") {
+    renderSupplyRequestForm(content);
+    return;
+  }
+
+  if (tabId === "orders") {
+    renderInventoryOrders(content);
     return;
   }
 
   const labels = {
-    "pre-event": "Pre-Event Task List",
     "during-event": "During-Event Task List",
-    "closing": "Closing Task List",
     "reports": "Reports"
   };
   content.innerHTML = `
@@ -317,6 +333,24 @@ function renderTabContent(tabId) {
       <p>This section is scaffolded and ready for data binding — coming in the next build pass.</p>
     </div>
   `;
+}
+
+// ===================== SHARED: LOCATION GROUPS (derived from imported units) =====================
+// Multiple privy units (Male/Female/ADA) at the same physical spot share one name
+// (e.g. "King Loo") — that name is the inventory group key. Groups are derived
+// live from /sites/{site}/units rather than stored separately, so they always match.
+function getLocationGroups(site) {
+  return db.ref(`sites/${site}/units`).once("value").then((snap) => {
+    const groups = {};
+    if (snap.exists()) {
+      Object.values(snap.val()).forEach((unit) => {
+        const groupKey = unit.name.trim().replace(/[.#$/\[\]]/g, "_");
+        if (!groups[groupKey]) groups[groupKey] = { name: unit.name.trim(), unitCount: 0 };
+        groups[groupKey].unitCount++;
+      });
+    }
+    return groups;
+  });
 }
 
 // ===================== OUT-OF-ORDER: USER FLAGS A UNIT =====================
@@ -564,13 +598,51 @@ function renderInventoryItemsAdmin(content) {
     return;
   }
 
-  content.innerHTML = `<div class="card"><p style="color:var(--muted);">Loading inventory items...</p></div>`;
+  content.innerHTML = `<div class="card"><p style="color:var(--muted);">Loading location groups...</p></div>`;
 
-  db.ref(`sites/${site}/inventoryItems`).once("value").then((snap) => {
+  getLocationGroups(site).then((groups) => {
+    const groupKeys = Object.keys(groups);
+    if (!groupKeys.length) {
+      content.innerHTML = `<div class="panel-placeholder">No units imported for ${SITES[site]} yet. Import units in the Admin Panel first — inventory groups are derived from unit names.</div>`;
+      return;
+    }
+
+    const groupOptions = groupKeys.map(key =>
+      `<option value="${key}">${groups[key].name} (${groups[key].unitCount} unit${groups[key].unitCount > 1 ? "s" : ""})</option>`
+    ).join("");
+
+    content.innerHTML = `
+      <div class="card">
+        <h3 style="color:var(--navy); margin-bottom:14px;">Inventory Items — ${SITES[site]}</h3>
+        <p style="color:var(--muted); font-size:0.85rem; margin-bottom:10px;">
+          Inventory is tracked per location group — units sharing the same name (e.g. Male/Female/ADA at "King Loo") share one inventory pool.
+        </p>
+        <label style="display:block; font-size:0.85rem; color:var(--muted); margin-bottom:6px;">Location group</label>
+        <select id="inventory-group-select" style="width:100%; max-width:300px; padding:8px; border:1px solid var(--border); border-radius:6px; margin-bottom:16px;">
+          ${groupOptions}
+        </select>
+        <div id="inventory-group-content"></div>
+      </div>
+    `;
+
+    const groupSelect = document.getElementById("inventory-group-select");
+    groupSelect.addEventListener("change", () => renderGroupItemsPanel(site, groupSelect.value, groups[groupSelect.value].name));
+    renderGroupItemsPanel(site, groupSelect.value, groups[groupSelect.value].name);
+  });
+}
+
+function renderGroupItemsPanel(site, groupKey, groupName) {
+  const panel = document.getElementById("inventory-group-content");
+  panel.innerHTML = `<p style="color:var(--muted);">Loading items...</p>`;
+
+  db.ref(`sites/${site}/groupInventory/${groupKey}/items`).once("value").then((snap) => {
     const items = snap.exists() ? snap.val() : {};
     const rows = Object.entries(items).map(([key, item]) => `
       <tr>
-        <td style="padding:8px; border-bottom:1px solid var(--border);">${item.name}</td>
+        <td style="padding:8px; border-bottom:1px solid var(--border);">
+          ${item.name}
+          ${item.parRaisedSuggested ? `<span title="A mid-event supply request came in for this item — consider raising the par level" style="color:var(--warn); font-size:0.75rem; margin-left:6px;">⚠ consider raising par</span>` : ""}
+        </td>
         <td style="padding:8px; border-bottom:1px solid var(--border);">${item.parLevel}</td>
         <td style="padding:8px; border-bottom:1px solid var(--border);">
           <button class="delete-item-btn" data-key="${key}" style="padding:4px 10px; background:none; border:1px solid var(--danger); color:var(--danger); border-radius:4px; cursor:pointer; font-size:0.75rem;">Remove</button>
@@ -582,31 +654,25 @@ function renderInventoryItemsAdmin(content) {
       `<button class="suggested-chip" data-name="${name}" style="padding:5px 12px; margin:3px; background:#f4f2ee; border:1px solid var(--border); border-radius:14px; cursor:pointer; font-size:0.8rem;">${name}</button>`
     ).join("");
 
-    content.innerHTML = `
-      <div class="card">
-        <h3 style="color:var(--navy); margin-bottom:14px;">Inventory Items — ${SITES[site]}</h3>
-        <p style="color:var(--muted); font-size:0.85rem; margin-bottom:10px;">
-          Par level is the target stock in cases (e.g. 2.5 = two and a half cases). Attendants will record actual case counts against this list during Closing.
-        </p>
-        <p style="color:var(--muted); font-size:0.8rem; margin-bottom:6px;">Quick-add suggestions:</p>
-        <div style="margin-bottom:16px;">${chipButtons}</div>
-        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:16px;">
-          <input type="text" id="new-item-name" placeholder="Item name" style="flex:2; min-width:160px; padding:8px; border:1px solid var(--border); border-radius:6px;">
-          <input type="number" id="new-item-par" placeholder="Par level (cases)" step="0.25" min="0" style="flex:1; min-width:140px; padding:8px; border:1px solid var(--border); border-radius:6px;">
-          <button id="add-item-btn" style="padding:8px 16px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer;">Add Item</button>
-        </div>
-        <div id="item-add-status" style="font-size:0.85rem; margin-bottom:14px;"></div>
-        <table style="width:100%; border-collapse:collapse; font-size:0.85rem;">
-          <thead>
-            <tr style="text-align:left; color:var(--muted);">
-              <th style="padding:8px; border-bottom:2px solid var(--border);">Item</th>
-              <th style="padding:8px; border-bottom:2px solid var(--border);">Par Level (cases)</th>
-              <th style="padding:8px; border-bottom:2px solid var(--border);"></th>
-            </tr>
-          </thead>
-          <tbody>${rows || `<tr><td colspan="3" style="padding:8px; color:var(--muted);">No items yet — add some above.</td></tr>`}</tbody>
-        </table>
+    panel.innerHTML = `
+      <p style="color:var(--muted); font-size:0.8rem; margin-bottom:6px;">Quick-add suggestions:</p>
+      <div style="margin-bottom:16px;">${chipButtons}</div>
+      <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:16px;">
+        <input type="text" id="new-item-name" placeholder="Item name" style="flex:2; min-width:160px; padding:8px; border:1px solid var(--border); border-radius:6px;">
+        <input type="number" id="new-item-par" placeholder="Par level (cases)" step="0.25" min="0" style="flex:1; min-width:140px; padding:8px; border:1px solid var(--border); border-radius:6px;">
+        <button id="add-item-btn" style="padding:8px 16px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer;">Add Item</button>
       </div>
+      <div id="item-add-status" style="font-size:0.85rem; margin-bottom:14px;"></div>
+      <table style="width:100%; border-collapse:collapse; font-size:0.85rem;">
+        <thead>
+          <tr style="text-align:left; color:var(--muted);">
+            <th style="padding:8px; border-bottom:2px solid var(--border);">Item</th>
+            <th style="padding:8px; border-bottom:2px solid var(--border);">Par Level (cases)</th>
+            <th style="padding:8px; border-bottom:2px solid var(--border);"></th>
+          </tr>
+        </thead>
+        <tbody>${rows || `<tr><td colspan="3" style="padding:8px; color:var(--muted);">No items yet — add some above.</td></tr>`}</tbody>
+      </table>
     `;
 
     function addItem(name, parLevel) {
@@ -617,8 +683,8 @@ function renderInventoryItemsAdmin(content) {
         return;
       }
       const key = name.trim().replace(/[.#$/\[\]]/g, "_");
-      db.ref(`sites/${site}/inventoryItems/${key}`).set({ name: name.trim(), parLevel: parseFloat(parLevel) || 0 })
-        .then(() => renderInventoryItemsAdmin(content))
+      db.ref(`sites/${site}/groupInventory/${groupKey}/items/${key}`).set({ name: name.trim(), parLevel: parseFloat(parLevel) || 0 })
+        .then(() => renderGroupItemsPanel(site, groupKey, groupName))
         .catch((err) => {
           statusEl.style.color = "var(--danger)";
           statusEl.textContent = "Failed to add: " + err.message;
@@ -629,15 +695,15 @@ function renderInventoryItemsAdmin(content) {
       addItem(document.getElementById("new-item-name").value, document.getElementById("new-item-par").value);
     });
 
-    content.querySelectorAll(".suggested-chip").forEach((chip) => {
+    panel.querySelectorAll(".suggested-chip").forEach((chip) => {
       chip.addEventListener("click", () => addItem(chip.dataset.name, 1));
     });
 
-    content.querySelectorAll(".delete-item-btn").forEach((btn) => {
+    panel.querySelectorAll(".delete-item-btn").forEach((btn) => {
       btn.addEventListener("click", () => {
         if (!confirm("Remove this item from the inventory list?")) return;
-        db.ref(`sites/${site}/inventoryItems/${btn.dataset.key}`).remove()
-          .then(() => renderInventoryItemsAdmin(content))
+        db.ref(`sites/${site}/groupInventory/${groupKey}/items/${btn.dataset.key}`).remove()
+          .then(() => renderGroupItemsPanel(site, groupKey, groupName))
           .catch((err) => alert("Failed to remove: " + err.message));
       });
     });
@@ -647,15 +713,44 @@ function renderInventoryItemsAdmin(content) {
 // ===================== INVENTORY COUNT ENTRY (User closing count, or Maintenance supply restock) =====================
 function renderInventoryCountEntry(content, type, title) {
   const site = currentUser.site;
-  content.innerHTML = `<div class="card"><p style="color:var(--muted);">Loading inventory items...</p></div>`;
+  content.innerHTML = `<div class="card"><p style="color:var(--muted);">Loading location groups...</p></div>`;
 
-  db.ref(`sites/${site}/inventoryItems`).once("value").then((snap) => {
+  getLocationGroups(site).then((groups) => {
+    const groupKeys = Object.keys(groups);
+    if (!groupKeys.length) {
+      content.innerHTML = `<div class="panel-placeholder">No units imported for ${SITES[site]} yet.</div>`;
+      return;
+    }
+    const groupOptions = groupKeys.map(key => `<option value="${key}">${groups[key].name}</option>`).join("");
+
+    content.innerHTML = `
+      <div class="card">
+        <h3 style="color:var(--navy); margin-bottom:14px;">${title} — ${SITES[site]}</h3>
+        <label style="display:block; font-size:0.85rem; color:var(--muted); margin-bottom:6px;">Location group</label>
+        <select id="count-group-select" style="width:100%; max-width:300px; padding:8px; border:1px solid var(--border); border-radius:6px; margin-bottom:16px;">
+          ${groupOptions}
+        </select>
+        <div id="count-group-content"></div>
+      </div>
+    `;
+
+    const groupSelect = document.getElementById("count-group-select");
+    groupSelect.addEventListener("change", () => renderGroupCountForm(site, groupSelect.value, groups[groupSelect.value].name, type));
+    renderGroupCountForm(site, groupSelect.value, groups[groupSelect.value].name, type);
+  });
+}
+
+function renderGroupCountForm(site, groupKey, groupName, type) {
+  const panel = document.getElementById("count-group-content");
+  panel.innerHTML = `<p style="color:var(--muted);">Loading items...</p>`;
+
+  db.ref(`sites/${site}/groupInventory/${groupKey}/items`).once("value").then((snap) => {
     if (!snap.exists()) {
-      content.innerHTML = `<div class="panel-placeholder">No inventory items set up for ${SITES[site]} yet. Ask your Super User to add items in the Pre-Event tab.</div>`;
+      panel.innerHTML = `<p style="color:var(--muted);">No inventory items set up for ${groupName} yet. Ask your Super User to add items in the Pre-Event tab.</p>`;
       return;
     }
     const items = snap.val();
-    const inputLabel = type === "maintenance-restock" ? "Cases brought" : "Case count";
+    const inputLabel = type === "addition" ? "Cases brought" : "Case count";
     const rows = Object.entries(items).map(([key, item]) => `
       <div style="display:flex; align-items:center; justify-content:space-between; padding:10px 0; border-bottom:1px solid var(--border);">
         <div>
@@ -670,27 +765,24 @@ function renderInventoryCountEntry(content, type, title) {
       </div>
     `).join("");
 
-    content.innerHTML = `
-      <div class="card">
-        <h3 style="color:var(--navy); margin-bottom:8px;">${title} — ${SITES[site]}</h3>
-        <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">
-          ${type === "maintenance-restock"
-            ? "Log how many cases of each item you brought/restocked (quarter-case increments, e.g. .25, .50, .75, 1.00...)."
-            : "Enter case count for each item (in quarter-case increments, e.g. .25, .50, .75, 1.00, 1.25...)."}
-        </p>
-        ${rows}
-        <button id="submit-count-btn" style="margin-top:16px; padding:10px 20px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer;">
-          Submit
-        </button>
-        <div id="count-submit-status" style="margin-top:12px; font-size:0.85rem;"></div>
-      </div>
+    panel.innerHTML = `
+      <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">
+        ${type === "addition"
+          ? "Log how many cases of each item you brought/restocked (quarter-case increments, e.g. .25, .50, .75, 1.00...)."
+          : `Enter ${type} case count for each item (in quarter-case increments, e.g. .25, .50, .75, 1.00, 1.25...).`}
+      </p>
+      ${rows}
+      <button id="submit-count-btn" style="margin-top:16px; padding:10px 20px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer;">
+        Submit
+      </button>
+      <div id="count-submit-status" style="margin-top:12px; font-size:0.85rem;"></div>
     `;
 
     document.getElementById("submit-count-btn").addEventListener("click", () => {
       const statusEl = document.getElementById("count-submit-status");
       const counts = {};
       let hasAny = false;
-      content.querySelectorAll(".count-input").forEach((input) => {
+      panel.querySelectorAll(".count-input").forEach((input) => {
         const val = input.value.trim();
         if (val !== "") {
           counts[input.dataset.key] = { name: input.dataset.name, count: parseFloat(val) };
@@ -704,7 +796,7 @@ function renderInventoryCountEntry(content, type, title) {
         return;
       }
 
-      db.ref(`sites/${site}/inventoryCounts`).push({
+      db.ref(`sites/${site}/groupInventory/${groupKey}/counts`).push({
         type,
         countedByUid: currentUser.uid,
         countedByName: `${currentUser.firstName} ${currentUser.lastName}`,
@@ -732,44 +824,92 @@ function renderInventoryCountHistory(content) {
     return;
   }
 
-  content.innerHTML = `<div class="card"><p style="color:var(--muted);">Loading count history...</p></div>`;
+  content.innerHTML = `<div class="card"><p style="color:var(--muted);">Loading location groups...</p></div>`;
 
-  Promise.all([
-    db.ref(`sites/${site}/inventoryItems`).once("value"),
-    db.ref(`sites/${site}/inventoryCounts`).limitToLast(10).once("value")
-  ]).then(([itemsSnap, countsSnap]) => {
-    const parLevels = {};
-    if (itemsSnap.exists()) {
-      Object.entries(itemsSnap.val()).forEach(([key, item]) => { parLevels[key] = item.parLevel; });
-    }
-
-    if (!countsSnap.exists()) {
-      content.innerHTML = `<div class="panel-placeholder">No inventory counts submitted yet for ${SITES[site]}.</div>`;
+  getLocationGroups(site).then((groups) => {
+    const groupKeys = Object.keys(groups);
+    if (!groupKeys.length) {
+      content.innerHTML = `<div class="panel-placeholder">No units imported for ${SITES[site]} yet.</div>`;
       return;
     }
+    const groupOptions = groupKeys.map(key => `<option value="${key}">${groups[key].name}</option>`).join("");
 
+    content.innerHTML = `
+      <div class="card">
+        <label style="display:block; font-size:0.85rem; color:var(--muted); margin-bottom:6px;">Location group</label>
+        <select id="history-group-select" style="width:100%; max-width:300px; padding:8px; border:1px solid var(--border); border-radius:6px;">
+          ${groupOptions}
+        </select>
+      </div>
+      <div id="history-group-content"></div>
+    `;
+
+    const groupSelect = document.getElementById("history-group-select");
+    groupSelect.addEventListener("change", () => renderGroupCountHistory(site, groupSelect.value, groups[groupSelect.value].name));
+    renderGroupCountHistory(site, groupSelect.value, groups[groupSelect.value].name);
+  });
+}
+
+const COUNT_TYPE_LABELS = {
+  beginning: { label: "Beginning count", bg: "#dce8f5", color: "#2c5f8a" },
+  addition: { label: "Addition / restock", bg: "#f0dcd8", color: "#a13f30" },
+  ending: { label: "Ending count", bg: "#e2ede0", color: "#3a7d44" }
+};
+
+function renderGroupCountHistory(site, groupKey, groupName) {
+  const panel = document.getElementById("history-group-content");
+  panel.innerHTML = `<div class="card"><p style="color:var(--muted);">Loading...</p></div>`;
+
+  Promise.all([
+    db.ref(`sites/${site}/groupInventory/${groupKey}/items`).once("value"),
+    db.ref(`sites/${site}/groupInventory/${groupKey}/counts`).once("value")
+  ]).then(([itemsSnap, countsSnap]) => {
+    const items = itemsSnap.exists() ? itemsSnap.val() : {};
     const entries = [];
-    countsSnap.forEach((child) => entries.push(child.val()));
-    entries.reverse();
+    if (countsSnap.exists()) countsSnap.forEach((child) => entries.push(child.val()));
 
-    const cardsHtml = entries.map(entry => {
+    // Compute latest count of each type, per item, for the reorder summary
+    const latest = {}; // itemKey -> { beginning, addition (sum), ending }
+    Object.keys(items).forEach((key) => { latest[key] = { beginning: null, additionSum: 0, ending: null }; });
+    entries.forEach((entry) => {
+      Object.entries(entry.counts || {}).forEach(([key, c]) => {
+        if (!latest[key]) latest[key] = { beginning: null, additionSum: 0, ending: null };
+        if (entry.type === "beginning") latest[key].beginning = c.count;
+        if (entry.type === "addition") latest[key].additionSum += c.count;
+        if (entry.type === "ending") latest[key].ending = c.count;
+      });
+    });
+
+    const summaryRows = Object.entries(items).map(([key, item]) => {
+      const l = latest[key] || { beginning: null, additionSum: 0, ending: null };
+      const orderQty = l.ending !== null ? Math.max(0, item.parLevel - l.ending) : null;
+      return `
+        <tr>
+          <td style="padding:8px; border-bottom:1px solid var(--border);">${item.name}</td>
+          <td style="padding:8px; border-bottom:1px solid var(--border);">${item.parLevel}</td>
+          <td style="padding:8px; border-bottom:1px solid var(--border);">${l.beginning ?? "—"}</td>
+          <td style="padding:8px; border-bottom:1px solid var(--border);">${l.additionSum || "—"}</td>
+          <td style="padding:8px; border-bottom:1px solid var(--border);">${l.ending ?? "—"}</td>
+          <td style="padding:8px; border-bottom:1px solid var(--border); font-weight:600; ${orderQty > 0 ? "color:var(--danger);" : ""}">${orderQty !== null ? orderQty : "—"}</td>
+        </tr>
+      `;
+    }).join("");
+
+    entries.reverse();
+    const historyHtml = entries.map(entry => {
       const when = entry.timestamp ? new Date(entry.timestamp).toLocaleString() : "—";
-      const itemRows = Object.entries(entry.counts || {}).map(([key, c]) => {
-        const par = parLevels[key];
-        const belowPar = par !== undefined && c.count < par;
-        return `<div style="display:flex; justify-content:space-between; padding:4px 0; font-size:0.85rem;">
-          <span>${c.name}</span>
-          <span style="${belowPar ? "color:var(--danger); font-weight:600;" : ""}">${c.count}${par !== undefined ? ` / ${par} par` : ""}</span>
-        </div>`;
-      }).join("");
+      const typeInfo = COUNT_TYPE_LABELS[entry.type] || { label: entry.type, bg: "#eee", color: "#666" };
+      const itemRows = Object.entries(entry.counts || {}).map(([key, c]) =>
+        `<div style="display:flex; justify-content:space-between; padding:4px 0; font-size:0.85rem;">
+          <span>${c.name}</span><span>${c.count}</span>
+        </div>`
+      ).join("");
 
       return `
         <div class="card" style="margin-bottom:10px;">
           <div style="display:flex; justify-content:space-between; align-items:baseline;">
             <div style="font-weight:600; margin-bottom:4px;">${entry.countedByName}</div>
-            <span style="font-size:0.75rem; padding:2px 8px; border-radius:10px; ${entry.type === "maintenance-restock" ? "background:#f0dcd8; color:#a13f30;" : "background:#e2ede0; color:#3a7d44;"}">
-              ${entry.type === "maintenance-restock" ? "Maintenance restock" : "Closing count"}
-            </span>
+            <span style="font-size:0.75rem; padding:2px 8px; border-radius:10px; background:${typeInfo.bg}; color:${typeInfo.color};">${typeInfo.label}</span>
           </div>
           <div style="color:var(--muted); font-size:0.75rem; margin-bottom:10px;">${when}</div>
           ${itemRows}
@@ -777,7 +917,244 @@ function renderInventoryCountHistory(content) {
       `;
     }).join("");
 
-    content.innerHTML = `<h3 style="color:var(--navy); margin-bottom:14px;">Inventory Count History — ${SITES[site]}</h3>` + cardsHtml;
+    panel.innerHTML = `
+      <div class="card">
+        <h3 style="color:var(--navy); margin-bottom:14px;">${groupName} — Current Status</h3>
+        <table style="width:100%; border-collapse:collapse; font-size:0.85rem;">
+          <thead>
+            <tr style="text-align:left; color:var(--muted);">
+              <th style="padding:8px; border-bottom:2px solid var(--border);">Item</th>
+              <th style="padding:8px; border-bottom:2px solid var(--border);">Par</th>
+              <th style="padding:8px; border-bottom:2px solid var(--border);">Beginning</th>
+              <th style="padding:8px; border-bottom:2px solid var(--border);">Additions</th>
+              <th style="padding:8px; border-bottom:2px solid var(--border);">Ending</th>
+              <th style="padding:8px; border-bottom:2px solid var(--border);">Order Qty</th>
+            </tr>
+          </thead>
+          <tbody>${summaryRows || `<tr><td colspan="6" style="padding:8px; color:var(--muted);">No items set up yet.</td></tr>`}</tbody>
+        </table>
+      </div>
+      <h4 style="color:var(--navy); margin:16px 0 10px;">History</h4>
+      ${historyHtml || `<p style="color:var(--muted);">No counts logged yet for ${groupName}.</p>`}
+    `;
+  });
+}
+
+// ===================== USER: REQUEST SUPPLIES (mid-event, goes to Maintenance) =====================
+function renderSupplyRequestForm(content) {
+  const site = currentUser.site;
+  content.innerHTML = `<div class="card"><p style="color:var(--muted);">Loading...</p></div>`;
+
+  getLocationGroups(site).then((groups) => {
+    const groupKeys = Object.keys(groups);
+    if (!groupKeys.length) {
+      content.innerHTML = `<div class="panel-placeholder">No units imported for ${SITES[site]} yet.</div>`;
+      return;
+    }
+    const groupOptions = groupKeys.map(key => `<option value="${key}">${groups[key].name}</option>`).join("");
+
+    content.innerHTML = `
+      <div class="card">
+        <h3 style="color:var(--navy); margin-bottom:14px;">Request Supplies — ${SITES[site]}</h3>
+        <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">Running low on something mid-event? This alerts Maintenance to bring more.</p>
+        <label style="display:block; font-size:0.85rem; color:var(--muted); margin-bottom:6px;">Location group</label>
+        <select id="request-group-select" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; margin-bottom:14px;">
+          ${groupOptions}
+        </select>
+        <div id="request-items-content"></div>
+      </div>
+    `;
+
+    const groupSelect = document.getElementById("request-group-select");
+    groupSelect.addEventListener("change", () => renderRequestItemPicker(site, groupSelect.value, groups[groupSelect.value].name));
+    renderRequestItemPicker(site, groupSelect.value, groups[groupSelect.value].name);
+  });
+}
+
+function renderRequestItemPicker(site, groupKey, groupName) {
+  const panel = document.getElementById("request-items-content");
+  panel.innerHTML = `<p style="color:var(--muted);">Loading items...</p>`;
+
+  db.ref(`sites/${site}/groupInventory/${groupKey}/items`).once("value").then((snap) => {
+    if (!snap.exists()) {
+      panel.innerHTML = `<p style="color:var(--muted);">No inventory items set up for ${groupName} yet.</p>`;
+      return;
+    }
+    const items = snap.val();
+    const itemOptions = Object.entries(items).map(([key, item]) => `<option value="${key}">${item.name}</option>`).join("");
+
+    panel.innerHTML = `
+      <label style="display:block; font-size:0.85rem; color:var(--muted); margin-bottom:6px;">Item</label>
+      <select id="request-item-select" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; margin-bottom:14px;">
+        ${itemOptions}
+      </select>
+      <label style="display:block; font-size:0.85rem; color:var(--muted); margin-bottom:6px;">Note (optional)</label>
+      <textarea id="request-note-input" rows="2" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; margin-bottom:14px; font-family:inherit;" placeholder="e.g. completely out, need it soon"></textarea>
+      <button id="submit-request-btn" style="padding:10px 20px; background:var(--danger); color:white; border:none; border-radius:6px; cursor:pointer; font-weight:600;">
+        Send Request to Maintenance
+      </button>
+      <div id="request-submit-status" style="margin-top:12px; font-size:0.85rem;"></div>
+    `;
+
+    document.getElementById("submit-request-btn").addEventListener("click", () => {
+      const itemKey = document.getElementById("request-item-select").value;
+      const itemName = items[itemKey].name;
+      const note = document.getElementById("request-note-input").value.trim();
+      const statusEl = document.getElementById("request-submit-status");
+
+      db.ref(`sites/${site}/supplyRequests`).push({
+        groupKey, groupName, itemKey, itemName, note,
+        requestedByUid: currentUser.uid,
+        requestedByName: `${currentUser.firstName} ${currentUser.lastName}`,
+        requestedAt: firebase.database.ServerValue.TIMESTAMP,
+        status: "open"
+      }).then(() => {
+        // Flag the item so admins see a "consider raising par" suggestion
+        return db.ref(`sites/${site}/groupInventory/${groupKey}/items/${itemKey}/parRaisedSuggested`).set(true);
+      }).then(() => {
+        statusEl.style.color = "var(--success)";
+        statusEl.textContent = `Request sent — Maintenance has been notified about ${itemName} at ${groupName}.`;
+        document.getElementById("request-note-input").value = "";
+      }).catch((err) => {
+        statusEl.style.color = "var(--danger)";
+        statusEl.textContent = "Failed to send request: " + err.message;
+      });
+    });
+  });
+}
+
+// ===================== INVENTORY ROLE: ORDERS DASHBOARD =====================
+function renderInventoryOrders(content) {
+  const site = currentUser.site;
+  content.innerHTML = `<div class="card"><p style="color:var(--muted);">Loading orders...</p></div>`;
+
+  Promise.all([
+    getLocationGroups(site),
+    db.ref(`sites/${site}/supplyRequests`).orderByChild("status").equalTo("open").once("value")
+  ]).then(([groups, requestsSnap]) => {
+    const openRequests = [];
+    if (requestsSnap.exists()) requestsSnap.forEach((child) => openRequests.push({ reqId: child.key, ...child.val() }));
+
+    const groupKeys = Object.keys(groups);
+    const groupFetches = groupKeys.map(key =>
+      Promise.all([
+        db.ref(`sites/${site}/groupInventory/${key}/items`).once("value"),
+        db.ref(`sites/${site}/groupInventory/${key}/counts`).once("value")
+      ]).then(([itemsSnap, countsSnap]) => ({ key, name: groups[key].name, itemsSnap, countsSnap }))
+    );
+
+    Promise.all(groupFetches).then((groupResults) => {
+      const orderRows = [];
+
+      groupResults.forEach(({ key, name, itemsSnap, countsSnap }) => {
+        if (!itemsSnap.exists()) return;
+        const items = itemsSnap.val();
+        const latestEnding = {};
+        if (countsSnap.exists()) {
+          countsSnap.forEach((child) => {
+            const entry = child.val();
+            if (entry.type === "ending") {
+              Object.entries(entry.counts || {}).forEach(([itemKey, c]) => { latestEnding[itemKey] = c.count; });
+            }
+          });
+        }
+        Object.entries(items).forEach(([itemKey, item]) => {
+          const ending = latestEnding[itemKey];
+          const orderQty = ending !== undefined ? Math.max(0, item.parLevel - ending) : null;
+          if (orderQty !== null && orderQty > 0) {
+            orderRows.push({ groupKey: key, groupName: name, itemKey, itemName: item.name, parLevel: item.parLevel, ending, orderQty });
+          }
+        });
+      });
+
+      const requestsHtml = openRequests.length ? `
+        <div class="card">
+          <h3 style="color:var(--navy); margin-bottom:14px;">Open Mid-Event Requests</h3>
+          ${openRequests.map(r => `
+            <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid var(--border);">
+              <div>
+                <strong>${r.itemName}</strong> — ${r.groupName}
+                <div style="color:var(--muted); font-size:0.75rem;">Requested by ${r.requestedByName}${r.note ? ": " + r.note : ""}</div>
+              </div>
+              <button class="fulfill-request-btn" data-req-id="${r.reqId}" style="padding:6px 12px; background:var(--success); color:white; border:none; border-radius:6px; cursor:pointer; font-size:0.8rem;">Mark Fulfilled</button>
+            </div>
+          `).join("")}
+        </div>
+      ` : "";
+
+      const ordersHtml = orderRows.length ? `
+        <div class="card">
+          <h3 style="color:var(--navy); margin-bottom:14px;">Reorder List — ${SITES[site]}</h3>
+          <table style="width:100%; border-collapse:collapse; font-size:0.85rem;">
+            <thead>
+              <tr style="text-align:left; color:var(--muted);">
+                <th style="padding:8px; border-bottom:2px solid var(--border);">Location Group</th>
+                <th style="padding:8px; border-bottom:2px solid var(--border);">Item</th>
+                <th style="padding:8px; border-bottom:2px solid var(--border);">Par</th>
+                <th style="padding:8px; border-bottom:2px solid var(--border);">Ending</th>
+                <th style="padding:8px; border-bottom:2px solid var(--border);">Order Qty</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${orderRows.map(r => `
+                <tr>
+                  <td style="padding:8px; border-bottom:1px solid var(--border);">${r.groupName}</td>
+                  <td style="padding:8px; border-bottom:1px solid var(--border);">${r.itemName}</td>
+                  <td style="padding:8px; border-bottom:1px solid var(--border);">${r.parLevel}</td>
+                  <td style="padding:8px; border-bottom:1px solid var(--border);">${r.ending}</td>
+                  <td style="padding:8px; border-bottom:1px solid var(--border); font-weight:600; color:var(--danger);">${r.orderQty}</td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+          <button id="email-order-btn" style="margin-top:14px; padding:10px 20px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer;">
+            Email This Order
+          </button>
+        </div>
+      ` : `<div class="panel-placeholder">No items currently below par for ${SITES[site]}.</div>`;
+
+      content.innerHTML = requestsHtml + ordersHtml;
+
+      content.querySelectorAll(".fulfill-request-btn").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const req = openRequests.find(r => r.reqId === btn.dataset.reqId);
+          const qtyStr = prompt(`How many cases of "${req.itemName}" were delivered to ${req.groupName}?`, "1");
+          if (qtyStr === null) return; // cancelled
+          const qty = parseFloat(qtyStr);
+          if (isNaN(qty) || qty <= 0) {
+            alert("Enter a valid quantity greater than 0.");
+            return;
+          }
+
+          db.ref(`sites/${site}/groupInventory/${req.groupKey}/counts`).push({
+            type: "addition",
+            countedByUid: currentUser.uid,
+            countedByName: `${currentUser.firstName} ${currentUser.lastName}`,
+            countedByRole: currentUser.role,
+            timestamp: firebase.database.ServerValue.TIMESTAMP,
+            counts: { [req.itemKey]: { name: req.itemName, count: qty } },
+            note: `Fulfilled mid-event request from ${req.requestedByName}`
+          }).then(() => db.ref(`sites/${site}/supplyRequests/${btn.dataset.reqId}`).update({
+            status: "fulfilled",
+            fulfilledByUid: currentUser.uid,
+            fulfilledByName: `${currentUser.firstName} ${currentUser.lastName}`,
+            fulfilledAt: firebase.database.ServerValue.TIMESTAMP,
+            fulfilledQty: qty
+          })).then(() => renderInventoryOrders(content))
+          .catch((err) => alert("Failed to mark fulfilled: " + err.message));
+        });
+      });
+
+      const emailBtn = document.getElementById("email-order-btn");
+      if (emailBtn) {
+        emailBtn.addEventListener("click", () => {
+          const bodyLines = orderRows.map(r => `${r.groupName} — ${r.itemName}: order ${r.orderQty} cases (par ${r.parLevel}, ending ${r.ending})`);
+          const subject = encodeURIComponent(`Privy Check Order — ${SITES[site]}`);
+          const body = encodeURIComponent(`Order needed for ${SITES[site]}:\n\n${bodyLines.join("\n")}`);
+          window.location.href = `mailto:?subject=${subject}&body=${body}`;
+        });
+      }
+    });
   });
 }
 
@@ -855,8 +1232,8 @@ function renderAdminPanel(content) {
           <label style="display:block; font-size:0.8rem; color:var(--muted); margin-bottom:4px;">Role</label>
           <select id="add-staff-role" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px;">
             ${isSuperadmin
-              ? `<option value="superadmin">Superadmin</option><option value="superuser">Super User</option><option value="user" selected>User</option><option value="maintenance">Maintenance</option><option value="preevent">Pre-Event</option><option value="executive">Executive</option>`
-              : `<option value="user" selected>User</option><option value="maintenance">Maintenance</option><option value="preevent">Pre-Event</option>`}
+              ? `<option value="superadmin">Superadmin</option><option value="superuser">Super User</option><option value="user" selected>User</option><option value="maintenance">Maintenance</option><option value="preevent">Pre-Event</option><option value="executive">Executive</option><option value="inventory">Inventory</option>`
+              : `<option value="user" selected>User</option><option value="maintenance">Maintenance</option><option value="preevent">Pre-Event</option><option value="inventory">Inventory</option>`}
           </select>
         </div>
         <div>
@@ -887,7 +1264,7 @@ function renderAdminPanel(content) {
       <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">
         CSV columns required: <code>first_name, last_name, email, phone, role, site, pin</code>.
         Phone is optional at import — but anyone without a phone on file can't use "Forgot PIN?" text reset until one is added (editable below in the staff list).
-        Role must be superadmin / superuser / user / maintenance / preevent / executive. Site can be blank for superadmin or executive (defaults to "all").
+        Role must be superadmin / superuser / user / maintenance / preevent / executive / inventory. Site can be blank for superadmin or executive (defaults to "all").
         Leave <code>pin</code> blank to auto-generate a unique 4-digit PIN. This <strong>adds</strong> new staff — it does not remove existing users.
       </p>
       <button id="staff-template-btn" style="padding:8px 14px; background:none; border:1px solid var(--navy); color:var(--navy); border-radius:6px; cursor:pointer; margin-bottom:14px;">
@@ -1082,7 +1459,7 @@ function renderAdminPanel(content) {
   document.getElementById("staff-import-btn").addEventListener("click", () => {
     const fileInput = document.getElementById("staff-csv-input");
     const statusEl = document.getElementById("staff-import-status");
-    const VALID_ROLES = ["superadmin", "superuser", "user", "maintenance", "preevent", "executive"];
+    const VALID_ROLES = ["superadmin", "superuser", "user", "maintenance", "preevent", "executive", "inventory"];
 
     if (!fileInput.files.length) {
       statusEl.style.color = "var(--danger)";
@@ -1128,7 +1505,7 @@ function renderAdminPanel(content) {
             let pin = (row.pin || "").trim();
 
             if (!firstName || !lastName) { errors.push(`Row ${i + 2}: missing first/last name`); return; }
-            if (!VALID_ROLES.includes(role)) { errors.push(`Row ${i + 2}: role "${role}" must be superadmin, superuser, user, maintenance, preevent, or executive`); return; }
+            if (!VALID_ROLES.includes(role)) { errors.push(`Row ${i + 2}: role "${role}" must be superadmin, superuser, user, maintenance, preevent, executive, or inventory`); return; }
             if (role === "superadmin" || role === "executive") {
               site = "all";
             } else if (!Object.keys(SITES).includes(site)) {
@@ -1288,9 +1665,18 @@ function loadStaffTable(site) {
           style="width:130px; padding:4px; border:1px solid var(--border); border-radius:4px;">
         <button class="phone-save-btn" data-uid="${u.uid}" style="padding:4px 8px; font-size:0.75rem; background:var(--navy); color:white; border:none; border-radius:4px; cursor:pointer; margin-left:4px;">Save</button>
       `;
+      const canEditThisRole = isSuperadminViewer || (currentUser.role === "superuser" && ["user", "maintenance", "preevent", "inventory"].includes(u.role));
+      const editableRoleOptions = isSuperadminViewer
+        ? Object.keys(ROLES)
+        : ["user", "maintenance", "preevent", "inventory"];
+      const roleCell = canEditThisRole
+        ? `<select class="role-edit" data-uid="${u.uid}" style="padding:4px; border:1px solid var(--border); border-radius:4px;">
+            ${editableRoleOptions.map(r => `<option value="${r}" ${u.role === r ? "selected" : ""}>${ROLES[r].label}</option>`).join("")}
+          </select>`
+        : ROLES[u.role] ? ROLES[u.role].label : u.role;
       return `<tr>
         <td style="padding:8px; border-bottom:1px solid var(--border);">${u.firstName} ${u.lastName}</td>
-        <td style="padding:8px; border-bottom:1px solid var(--border);">${ROLES[u.role] ? ROLES[u.role].label : u.role}</td>
+        <td style="padding:8px; border-bottom:1px solid var(--border);">${roleCell}</td>
         <td style="padding:8px; border-bottom:1px solid var(--border); white-space:nowrap;">${phoneCell}</td>
         <td style="padding:8px; border-bottom:1px solid var(--border); text-align:center;">${modCell}</td>
         <td style="padding:8px; border-bottom:1px solid var(--border);">${u.active === false ? "Inactive" : "Active"}</td>
@@ -1317,6 +1703,26 @@ function loadStaffTable(site) {
         <tbody>${rows}</tbody>
       </table>
     `;
+
+    container.querySelectorAll(".role-edit").forEach((select) => {
+      select.addEventListener("change", () => {
+        const uid = select.dataset.uid;
+        const newRole = select.value;
+        const updates = { role: newRole };
+        // Org-wide roles (superadmin/executive) get site "all"; switching away from
+        // one of those to a site-scoped role needs a real site — default to the
+        // currently-viewed site since that's the context this edit happened in.
+        if (newRole === "superadmin" || newRole === "executive") {
+          updates.site = "all";
+        } else {
+          const user = relevantUsers.find(u => u.uid === uid);
+          if (user.site === "all") updates.site = site;
+        }
+        db.ref(`users/${uid}`).update(updates)
+          .then(() => loadStaffTable(site))
+          .catch((err) => alert("Failed to update role: " + err.message));
+      });
+    });
 
     container.querySelectorAll(".mod-toggle").forEach((checkbox) => {
       checkbox.addEventListener("change", () => {
