@@ -288,7 +288,7 @@ function renderTabContent(tabId) {
 
   if (tabId === "pre-event") {
     if (currentUser.role === "superadmin" || currentUser.role === "superuser") {
-      renderInventoryItemsAdmin(content);
+      renderPreEventAdminPanel(content);
     } else if (currentUser.role === "user" || currentUser.role === "preevent") {
       renderInventoryCountEntry(content, "beginning", "Beginning Inventory Count");
     } else {
@@ -588,6 +588,76 @@ const SUGGESTED_INVENTORY_ITEMS = [
   "Toilet Paper", "Paper Towels", "Hand Soap", "Hand Sanitizer", "Trash Bags",
   "Toilet Seat Covers", "Air Freshener", "Disinfectant Spray", "Gloves", "Urinal Screens"
 ];
+
+// ===================== PRE-EVENT: COMBINED ADMIN PANEL (Open/Close toggles + Inventory Items) =====================
+function renderPreEventAdminPanel(content) {
+  content.innerHTML = `<div id="open-close-section"></div><div id="inventory-items-section"></div>`;
+  renderUnitOpenCloseToggles(document.getElementById("open-close-section"));
+  renderInventoryItemsAdmin(document.getElementById("inventory-items-section"));
+}
+
+function renderUnitOpenCloseToggles(container) {
+  const topSelector = document.getElementById("site-selector");
+  const site = currentUser.role === "superadmin" ? topSelector.value : currentUser.site;
+
+  if (currentUser.role === "superadmin" && site === "all") {
+    container.innerHTML = `<div class="card"><p style="color:var(--muted);">Pick a specific site above to manage unit open/closed status.</p></div>`;
+    return;
+  }
+
+  container.innerHTML = `<div class="card"><p style="color:var(--muted);">Loading units...</p></div>`;
+
+  // Superadmin can always toggle. Super User can only toggle while flagged MOD (on duty) —
+  // check their live status rather than the cached login-time value, since it can change mid-shift.
+  const permissionCheck = currentUser.role === "superadmin"
+    ? Promise.resolve(true)
+    : db.ref(`users/${currentUser.uid}/isMOD`).once("value").then(snap => snap.val() === true);
+
+  Promise.all([permissionCheck, db.ref(`sites/${site}/units`).once("value")]).then(([canToggle, unitsSnap]) => {
+    if (!unitsSnap.exists()) {
+      container.innerHTML = `<div class="card"><p style="color:var(--muted);">No units imported for ${SITES[site]} yet.</p></div>`;
+      return;
+    }
+    const units = unitsSnap.val();
+    const rows = Object.entries(units).map(([key, unit]) => {
+      const isOpen = unit.isOpen !== false; // default to open if never set
+      return `
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid var(--border);">
+          <div>
+            <strong>${unit.name}</strong> <span style="color:var(--muted); font-size:0.8rem;">${unit.type}${unit.location ? " — " + unit.location : ""}</span>
+          </div>
+          ${canToggle
+            ? `<button class="unit-open-toggle" data-key="${key}" data-open="${isOpen}" style="padding:6px 16px; border-radius:14px; border:none; cursor:pointer; font-weight:600; font-size:0.8rem; ${isOpen ? "background:var(--success); color:white;" : "background:var(--danger); color:white;"}">${isOpen ? "Open" : "Closed"}</button>`
+            : `<span style="padding:4px 12px; border-radius:14px; font-size:0.75rem; font-weight:600; ${isOpen ? "background:#e2ede0; color:var(--success);" : "background:#f0dcd8; color:var(--danger);"}">${isOpen ? "Open" : "Closed"}</span>`
+          }
+        </div>
+      `;
+    }).join("");
+
+    container.innerHTML = `
+      <div class="card">
+        <h3 style="color:var(--navy); margin-bottom:8px;">Unit Status — ${SITES[site]}</h3>
+        <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">
+          ${canToggle
+            ? "Tap a unit to toggle it Open (ready for use) or Closed (not in service yet)."
+            : "View-only — you need to be marked MOD (on duty) to toggle unit status. Ask your Superadmin to flip your MOD toggle in the Staff list."}
+        </p>
+        ${rows}
+      </div>
+    `;
+
+    if (canToggle) {
+      container.querySelectorAll(".unit-open-toggle").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const newOpen = btn.dataset.open !== "true";
+          db.ref(`sites/${site}/units/${btn.dataset.key}/isOpen`).set(newOpen)
+            .then(() => renderUnitOpenCloseToggles(container))
+            .catch((err) => alert("Failed to update: " + err.message));
+        });
+      });
+    }
+  });
+}
 
 function renderInventoryItemsAdmin(content) {
   const topSelector = document.getElementById("site-selector");
