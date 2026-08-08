@@ -2120,13 +2120,20 @@ function renderRequestItemPicker(site, groupKey, groupName) {
 // ===================== INVENTORY ROLE: ORDERS DASHBOARD =====================
 // ===================== SHARED: OPEN SUPPLY REQUESTS CARD (used by Orders, Out-of-Order Management, and Maintenance Queue) =====================
 function renderSupplyRequestsCard(site, onFulfilled) {
-  return db.ref(`sites/${site}/supplyRequests`).orderByChild("status").equalTo("open").once("value").then((requestsSnap) => {
+  return Promise.all([
+    db.ref(`sites/${site}/supplyRequests`).orderByChild("status").equalTo("open").once("value"),
+    db.ref(`sites/${site}/supplyRequests`).orderByChild("status").equalTo("fulfilled").limitToLast(10).once("value")
+  ]).then(([openSnap, fulfilledSnap]) => {
     const openRequests = [];
-    if (requestsSnap.exists()) requestsSnap.forEach((child) => openRequests.push({ reqId: child.key, ...child.val() }));
+    if (openSnap.exists()) openSnap.forEach((child) => openRequests.push({ reqId: child.key, ...child.val() }));
 
-    if (!openRequests.length) return "";
+    const fulfilledRequests = [];
+    if (fulfilledSnap.exists()) fulfilledSnap.forEach((child) => fulfilledRequests.push({ reqId: child.key, ...child.val() }));
+    fulfilledRequests.sort((a, b) => (b.fulfilledAt || 0) - (a.fulfilledAt || 0));
 
-    const html = `
+    if (!openRequests.length && !fulfilledRequests.length) return "";
+
+    const openHtml = openRequests.length ? `
       <div class="card">
         <h3 style="color:var(--navy); margin-bottom:14px;">Open Mid-Event Requests</h3>
         ${openRequests.map(r => `
@@ -2139,7 +2146,24 @@ function renderSupplyRequestsCard(site, onFulfilled) {
           </div>
         `).join("")}
       </div>
-    `;
+    ` : "";
+
+    const fulfilledHtml = fulfilledRequests.length ? `
+      <div class="card">
+        <h3 style="color:var(--navy); margin-bottom:14px;">Recently Fulfilled</h3>
+        ${fulfilledRequests.map(r => {
+          const when = r.fulfilledAt ? new Date(r.fulfilledAt).toLocaleString() : "—";
+          return `
+            <div style="padding:8px 0; border-bottom:1px solid var(--border); font-size:0.85rem;">
+              <strong>${r.itemName}</strong> — ${r.groupName} (${r.sex}): <span style="color:var(--success); font-weight:600;">${r.fulfilledQty ?? "?"} cases</span> delivered
+              <div style="color:var(--muted); font-size:0.75rem;">by ${r.fulfilledByName} · ${when} · requested by ${r.requestedByName}</div>
+            </div>
+          `;
+        }).join("")}
+      </div>
+    ` : "";
+
+    const html = openHtml + fulfilledHtml;
 
     return { html, openRequests };
   }).then((result) => {
