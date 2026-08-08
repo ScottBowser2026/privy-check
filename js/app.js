@@ -230,7 +230,6 @@ function renderTabsForRole(role) {
     ];
   } else if (role === "user") {
     tabs = [
-      { id: "pre-event", label: "Pre-Event" },
       { id: "during-event", label: "During Event" },
       { id: "closing", label: "Closing" },
       { id: "out-of-order", label: "Flag a Unit" },
@@ -289,7 +288,7 @@ function renderTabContent(tabId) {
   if (tabId === "pre-event") {
     if (currentUser.role === "superadmin" || currentUser.role === "superuser") {
       renderPreEventAdminPanel(content);
-    } else if (currentUser.role === "user" || currentUser.role === "preevent") {
+    } else if (currentUser.role === "preevent") {
       renderInventoryCountEntry(content, "beginning", "Beginning Inventory Count");
     } else {
       content.innerHTML = `<div class="panel-placeholder"><h3 style="margin-bottom:8px;color:var(--navy)">Pre-Event Task List</h3><p>Checklist tasks coming in a future build pass.</p></div>`;
@@ -353,6 +352,22 @@ function getLocationGroups(site) {
   });
 }
 
+// For User-role scope enforcement: returns the set of location-group keys that
+// contain at least one unit assigned to this attendant.
+function getAssignedGroupKeys(site, uid) {
+  return db.ref(`sites/${site}/units`).once("value").then((snap) => {
+    const keys = new Set();
+    if (snap.exists()) {
+      Object.values(snap.val()).forEach((unit) => {
+        if (unit.assignedToUid === uid) {
+          keys.add(unit.name.trim().replace(/[.#$/\[\]]/g, "_"));
+        }
+      });
+    }
+    return keys;
+  });
+}
+
 // ===================== OUT-OF-ORDER: USER FLAGS A UNIT =====================
 function renderFlagUnitForm(content) {
   const site = currentUser.site;
@@ -363,7 +378,14 @@ function renderFlagUnitForm(content) {
       content.innerHTML = `<div class="panel-placeholder">No units have been imported for ${SITES[site]} yet. Ask your Superadmin to import units in the Admin Panel.</div>`;
       return;
     }
-    const units = snap.val();
+    const allUnits = snap.val();
+    const units = Object.fromEntries(Object.entries(allUnits).filter(([, u]) => u.assignedToUid === currentUser.uid));
+
+    if (!Object.keys(units).length) {
+      content.innerHTML = `<div class="panel-placeholder">No units are currently assigned to you. Ask your Super User to assign you a unit in the Pre-Event tab.</div>`;
+      return;
+    }
+
     const unitOptions = Object.entries(units)
       .map(([key, u]) => `<option value="${key}">${u.name} — ${u.type}${u.status === "outOfOrder" ? " (already flagged)" : ""}</option>`)
       .join("");
@@ -613,34 +635,58 @@ function renderUnitOpenCloseToggles(container) {
     ? Promise.resolve(true)
     : db.ref(`users/${currentUser.uid}/isMOD`).once("value").then(snap => snap.val() === true);
 
-  Promise.all([permissionCheck, db.ref(`sites/${site}/units`).once("value")]).then(([canToggle, unitsSnap]) => {
+  Promise.all([
+    permissionCheck,
+    db.ref(`sites/${site}/units`).once("value"),
+    db.ref("users").once("value")
+  ]).then(([canToggle, unitsSnap, usersSnap]) => {
     if (!unitsSnap.exists()) {
       container.innerHTML = `<div class="card"><p style="color:var(--muted);">No units imported for ${SITES[site]} yet.</p></div>`;
       return;
     }
     const units = unitsSnap.val();
+
+    const attendants = [];
+    if (usersSnap.exists()) {
+      usersSnap.forEach((child) => {
+        const u = child.val();
+        if (u.role === "user" && u.site === site && u.active !== false) {
+          attendants.push({ uid: child.key, name: `${u.firstName} ${u.lastName}` });
+        }
+      });
+    }
+
     const rows = Object.entries(units).map(([key, unit]) => {
       const isOpen = unit.isOpen !== false; // default to open if never set
+      const assignOptions = `<option value="">Unassigned</option>` + attendants.map(a =>
+        `<option value="${a.uid}" ${unit.assignedToUid === a.uid ? "selected" : ""}>${a.name}</option>`
+      ).join("");
       return `
-        <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid var(--border);">
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid var(--border); flex-wrap:wrap; gap:8px;">
           <div>
             <strong>${unit.name}</strong> <span style="color:var(--muted); font-size:0.8rem;">${unit.type}${unit.location ? " — " + unit.location : ""}</span>
           </div>
-          ${canToggle
-            ? `<button class="unit-open-toggle" data-key="${key}" data-open="${isOpen}" style="padding:6px 16px; border-radius:14px; border:none; cursor:pointer; font-weight:600; font-size:0.8rem; ${isOpen ? "background:var(--success); color:white;" : "background:var(--danger); color:white;"}">${isOpen ? "Open" : "Closed"}</button>`
-            : `<span style="padding:4px 12px; border-radius:14px; font-size:0.75rem; font-weight:600; ${isOpen ? "background:#e2ede0; color:var(--success);" : "background:#f0dcd8; color:var(--danger);"}">${isOpen ? "Open" : "Closed"}</span>`
-          }
+          <div style="display:flex; align-items:center; gap:10px;">
+            ${canToggle
+              ? `<select class="unit-assign-select" data-key="${key}" style="padding:6px; border:1px solid var(--border); border-radius:6px; font-size:0.8rem;">${assignOptions}</select>`
+              : `<span style="color:var(--muted); font-size:0.8rem;">${unit.assignedToName || "Unassigned"}</span>`
+            }
+            ${canToggle
+              ? `<button class="unit-open-toggle" data-key="${key}" data-open="${isOpen}" style="padding:6px 16px; border-radius:14px; border:none; cursor:pointer; font-weight:600; font-size:0.8rem; ${isOpen ? "background:var(--success); color:white;" : "background:var(--danger); color:white;"}">${isOpen ? "Open" : "Closed"}</button>`
+              : `<span style="padding:4px 12px; border-radius:14px; font-size:0.75rem; font-weight:600; ${isOpen ? "background:#e2ede0; color:var(--success);" : "background:#f0dcd8; color:var(--danger);"}">${isOpen ? "Open" : "Closed"}</span>`
+            }
+          </div>
         </div>
       `;
     }).join("");
 
     container.innerHTML = `
       <div class="card">
-        <h3 style="color:var(--navy); margin-bottom:8px;">Unit Status — ${SITES[site]}</h3>
+        <h3 style="color:var(--navy); margin-bottom:8px;">Unit Status & Assignment — ${SITES[site]}</h3>
         <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">
           ${canToggle
-            ? "Tap a unit to toggle it Open (ready for use) or Closed (not in service yet)."
-            : "View-only — you need to be marked MOD (on duty) to toggle unit status. Ask your Superadmin to flip your MOD toggle in the Staff list."}
+            ? "Assign each unit to an attendant, and toggle it Open (ready for use) or Closed (not in service yet). Once assigned, that attendant's Flag/Closing/Request Supplies views only show their assigned units."
+            : "View-only — you need to be marked MOD (on duty) to make changes. Ask your Superadmin to flip your MOD toggle in the Staff list."}
         </p>
         ${rows}
       </div>
@@ -653,6 +699,16 @@ function renderUnitOpenCloseToggles(container) {
           db.ref(`sites/${site}/units/${btn.dataset.key}/isOpen`).set(newOpen)
             .then(() => renderUnitOpenCloseToggles(container))
             .catch((err) => alert("Failed to update: " + err.message));
+        });
+      });
+
+      container.querySelectorAll(".unit-assign-select").forEach((select) => {
+        select.addEventListener("change", () => {
+          const key = select.dataset.key;
+          const uid = select.value;
+          const name = uid ? select.options[select.selectedIndex].text : null;
+          db.ref(`sites/${site}/units/${key}`).update({ assignedToUid: uid || null, assignedToName: name })
+            .catch((err) => alert("Failed to assign: " + err.message));
         });
       });
     }
@@ -793,10 +849,22 @@ function renderInventoryCountEntry(content, type, title) {
   const site = currentUser.site;
   content.innerHTML = `<div class="card"><p style="color:var(--muted);">Loading location groups...</p></div>`;
 
-  getLocationGroups(site).then((groups) => {
+  // User-role attendants only see groups containing a unit assigned to them.
+  // Maintenance and other roles that reach this screen see everything at their site.
+  const scopePromise = currentUser.role === "user"
+    ? getAssignedGroupKeys(site, currentUser.uid)
+    : Promise.resolve(null);
+
+  Promise.all([getLocationGroups(site), scopePromise]).then(([allGroups, assignedKeys]) => {
+    const groups = assignedKeys
+      ? Object.fromEntries(Object.entries(allGroups).filter(([key]) => assignedKeys.has(key)))
+      : allGroups;
+
     const groupKeys = Object.keys(groups);
     if (!groupKeys.length) {
-      content.innerHTML = `<div class="panel-placeholder">No units imported for ${SITES[site]} yet.</div>`;
+      content.innerHTML = assignedKeys
+        ? `<div class="panel-placeholder">No units are currently assigned to you. Ask your Super User to assign you a unit in the Pre-Event tab.</div>`
+        : `<div class="panel-placeholder">No units imported for ${SITES[site]} yet.</div>`;
       return;
     }
     const groupOptions = groupKeys.map(key => `<option value="${key}">${groups[key].name}</option>`).join("");
@@ -1061,10 +1129,11 @@ function renderSupplyRequestForm(content) {
   const site = currentUser.site;
   content.innerHTML = `<div class="card"><p style="color:var(--muted);">Loading...</p></div>`;
 
-  getLocationGroups(site).then((groups) => {
+  Promise.all([getLocationGroups(site), getAssignedGroupKeys(site, currentUser.uid)]).then(([allGroups, assignedKeys]) => {
+    const groups = Object.fromEntries(Object.entries(allGroups).filter(([key]) => assignedKeys.has(key)));
     const groupKeys = Object.keys(groups);
     if (!groupKeys.length) {
-      content.innerHTML = `<div class="panel-placeholder">No units imported for ${SITES[site]} yet.</div>`;
+      content.innerHTML = `<div class="panel-placeholder">No units are currently assigned to you. Ask your Super User to assign you a unit in the Pre-Event tab.</div>`;
       return;
     }
     const groupOptions = groupKeys.map(key => `<option value="${key}">${groups[key].name}</option>`).join("");
@@ -1369,7 +1438,7 @@ function renderAdminPanel(content) {
           <select id="add-staff-role" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px;">
             ${isSuperadmin
               ? `<option value="superadmin">Superadmin</option><option value="superuser">Super User</option><option value="user" selected>User</option><option value="maintenance">Maintenance</option><option value="preevent">Pre-Event</option><option value="executive">Executive</option><option value="inventory">Inventory</option>`
-              : `<option value="user" selected>User</option><option value="maintenance">Maintenance</option><option value="preevent">Pre-Event</option><option value="inventory">Inventory</option>`}
+              : `<option value="user" selected>User</option><option value="maintenance">Maintenance</option><option value="preevent">Pre-Event</option><option value="inventory">Inventory</option><option value="superuser">Super User</option>`}
           </select>
         </div>
         <div>
@@ -1995,10 +2064,10 @@ function loadStaffTable(site) {
           style="width:130px; padding:4px; border:1px solid var(--border); border-radius:4px;">
         <button class="phone-save-btn" data-uid="${u.uid}" style="padding:4px 8px; font-size:0.75rem; background:var(--navy); color:white; border:none; border-radius:4px; cursor:pointer; margin-left:4px;">Save</button>
       `;
-      const canEditThisRole = isSuperadminViewer || (currentUser.role === "superuser" && ["user", "maintenance", "preevent", "inventory"].includes(u.role));
+      const canEditThisRole = isSuperadminViewer || (currentUser.role === "superuser" && ["user", "maintenance", "preevent", "inventory", "superuser"].includes(u.role));
       const editableRoleOptions = isSuperadminViewer
         ? Object.keys(ROLES)
-        : ["user", "maintenance", "preevent", "inventory"];
+        : ["user", "maintenance", "preevent", "inventory", "superuser"];
       const roleCell = canEditThisRole
         ? `<select class="role-edit" data-uid="${u.uid}" style="padding:4px; border:1px solid var(--border); border-radius:4px;">
             ${editableRoleOptions.map(r => `<option value="${r}" ${u.role === r ? "selected" : ""}>${ROLES[r].label}</option>`).join("")}
