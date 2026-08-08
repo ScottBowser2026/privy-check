@@ -344,11 +344,11 @@ function renderTabContent(tabId) {
   }
 
   if (tabId === "closing-entry") {
-    renderInventoryCountEntry(content, "ending", "Ending Inventory Count");
+    renderClosingEntryPanel(content);
     return;
   }
   if (tabId === "closing-history") {
-    renderInventoryCountHistory(content);
+    renderClosingHistoryPanel(content);
     return;
   }
 
@@ -764,6 +764,169 @@ function renderStatusReportHistory(content) {
   });
 }
 
+
+// ===================== CLOSING: COMBINED PANEL (Walkthrough photos/checklist + Ending Inventory Count) =====================
+function renderClosingEntryPanel(content) {
+  content.innerHTML = `<div id="closing-walkthrough-section"></div><div id="closing-inventory-section"></div>`;
+  renderClosingWalkthrough(document.getElementById("closing-walkthrough-section"));
+  renderInventoryCountEntry(document.getElementById("closing-inventory-section"), "ending", "Ending Inventory Count");
+}
+
+const CLOSING_CHECKLIST_QUESTIONS = [
+  { key: "paperTowels", label: "Paper towel dispensers filled?" },
+  { key: "handTowels", label: "Hand towel dispensers filled?" },
+  { key: "soap", label: "Soap dispensers filled?" },
+  { key: "toiletPaper", label: "Toilet paper stocked in every stall?" },
+  { key: "floors", label: "Floors clean and dry?" },
+  { key: "trash", label: "Trash cans emptied?" },
+  { key: "locked", label: "Units locked/secured for the night?" }
+];
+
+function renderClosingWalkthrough(container) {
+  const site = currentUser.site;
+  container.innerHTML = `<div class="card"><p style="color:var(--muted);">Loading your assigned units...</p></div>`;
+
+  db.ref(`sites/${site}/units`).once("value").then((snap) => {
+    if (!snap.exists()) {
+      container.innerHTML = `<div class="panel-placeholder">No units imported for ${SITES[site]} yet.</div>`;
+      return;
+    }
+    const allUnits = snap.val();
+    const myUnits = Object.entries(allUnits).filter(([, u]) => u.assignedTo && u.assignedTo[currentUser.uid]);
+
+    if (!myUnits.length) {
+      container.innerHTML = `<div class="panel-placeholder">No units are currently assigned to you.</div>`;
+      return;
+    }
+
+    const groups = {};
+    myUnits.forEach(([key, u]) => {
+      const groupKey = u.name.trim().replace(/[.#$/\[\]]/g, "_");
+      if (!groups[groupKey]) groups[groupKey] = { name: u.name.trim() };
+    });
+
+    const groupBlocks = Object.entries(groups).map(([groupKey, group]) => `
+      <div class="card" style="margin-bottom:10px;" data-group-key="${groupKey}">
+        <h4 style="color:var(--navy); margin-bottom:12px;">${group.name}</h4>
+
+        <div style="margin-bottom:14px;">
+          <label style="display:block; font-size:0.8rem; color:var(--muted); margin-bottom:6px;">Floor photo</label>
+          <input type="file" accept="image/*" capture="environment" class="closing-photo-input" data-photo-type="floor" style="margin-bottom:6px;">
+          <div class="closing-photo-preview" data-photo-type="floor" style="font-size:0.75rem; color:var(--muted);"></div>
+        </div>
+        <div style="margin-bottom:14px;">
+          <label style="display:block; font-size:0.8rem; color:var(--muted); margin-bottom:6px;">Sink area photo</label>
+          <input type="file" accept="image/*" capture="environment" class="closing-photo-input" data-photo-type="sink" style="margin-bottom:6px;">
+          <div class="closing-photo-preview" data-photo-type="sink" style="font-size:0.75rem; color:var(--muted);"></div>
+        </div>
+
+        <div style="margin-bottom:8px;">
+          ${CLOSING_CHECKLIST_QUESTIONS.map(q => `
+            <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid var(--border); font-size:0.85rem;">
+              <span>${q.label}</span>
+              <span>
+                <label style="margin-right:10px; cursor:pointer;"><input type="radio" name="${q.key}-${groupKey}" class="checklist-radio" data-question="${q.key}" value="yes" checked> Yes</label>
+                <label style="cursor:pointer;"><input type="radio" name="${q.key}-${groupKey}" class="checklist-radio" data-question="${q.key}" value="no"> No</label>
+              </span>
+            </div>
+          `).join("")}
+        </div>
+        <label style="display:block; font-size:0.8rem; color:var(--muted); margin:8px 0 4px;">Notes (required if anything is "No")</label>
+        <textarea class="closing-notes" rows="2" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; font-family:inherit;"></textarea>
+      </div>
+    `).join("");
+
+    container.innerHTML = `
+      <div class="card">
+        <h3 style="color:var(--navy); margin-bottom:8px;">Closing Walkthrough — ${SITES[site]}</h3>
+        <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">
+          Since no one's around after closing to check, a photo and checklist per location stands in for an in-person inspection.
+        </p>
+      </div>
+      ${groupBlocks}
+      <div class="card">
+        <button id="closing-walkthrough-submit-btn" style="padding:10px 20px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer; font-weight:600;">
+          Submit Closing Walkthrough
+        </button>
+        <div id="closing-walkthrough-status" style="margin-top:12px; font-size:0.85rem;"></div>
+      </div>
+    `;
+
+    // Show filename as a lightweight "selected" confirmation (no need to preview the image itself)
+    container.querySelectorAll(".closing-photo-input").forEach((input) => {
+      input.addEventListener("change", () => {
+        const preview = input.closest(".card").querySelector(`.closing-photo-preview[data-photo-type="${input.dataset.photoType}"]`);
+        preview.textContent = input.files.length ? `Selected: ${input.files[0].name}` : "";
+      });
+    });
+
+    document.getElementById("closing-walkthrough-submit-btn").addEventListener("click", () => {
+      const statusEl = document.getElementById("closing-walkthrough-status");
+      const groupCards = Array.from(container.querySelectorAll(".card[data-group-key]"));
+
+      // Validate: notes required if any "No" answer
+      let hasError = false;
+      groupCards.forEach((card) => {
+        const hasNo = Array.from(card.querySelectorAll(".checklist-radio:checked")).some(r => r.value === "no");
+        const notes = card.querySelector(".closing-notes").value.trim();
+        if (hasNo && !notes) hasError = true;
+      });
+      if (hasError) {
+        statusEl.style.color = "var(--danger)";
+        statusEl.textContent = "Add notes for any location with a 'No' answer.";
+        return;
+      }
+
+      statusEl.style.color = "var(--muted)";
+      statusEl.textContent = "Uploading photos...";
+
+      const uploadTasks = [];
+      const groupReports = {};
+
+      groupCards.forEach((card) => {
+        const groupKey = card.dataset.groupKey;
+        const groupName = groups[groupKey].name;
+        const answers = {};
+        CLOSING_CHECKLIST_QUESTIONS.forEach((q) => {
+          const checked = card.querySelector(`.checklist-radio[data-question="${q.key}"]:checked`);
+          answers[q.key] = checked ? checked.value : "yes";
+        });
+        const notes = card.querySelector(".closing-notes").value.trim();
+        const photoURLs = {};
+
+        card.querySelectorAll(".closing-photo-input").forEach((input) => {
+          if (input.files.length) {
+            const file = input.files[0];
+            const photoType = input.dataset.photoType;
+            const path = `privy-check/${site}/${groupKey}/${Date.now()}-${photoType}.jpg`;
+            const uploadTask = storage.ref(path).put(file).then(snapshot => snapshot.ref.getDownloadURL()).then((url) => {
+              photoURLs[photoType] = url;
+            });
+            uploadTasks.push(uploadTask);
+          }
+        });
+
+        groupReports[groupKey] = { groupName, answers, notes, photoURLs };
+      });
+
+      Promise.all(uploadTasks).then(() => {
+        statusEl.textContent = "Saving report...";
+        return db.ref(`sites/${site}/closingWalkthroughs`).push({
+          submittedByUid: currentUser.uid,
+          submittedByName: `${currentUser.firstName} ${currentUser.lastName}`,
+          timestamp: firebase.database.ServerValue.TIMESTAMP,
+          groupReports
+        });
+      }).then(() => {
+        statusEl.style.color = "var(--success)";
+        statusEl.textContent = "Closing walkthrough submitted.";
+      }).catch((err) => {
+        statusEl.style.color = "var(--danger)";
+        statusEl.textContent = "Failed to submit: " + err.message + " (if this is a permissions error, Storage rules may need to be set up — ask your Superadmin)";
+      });
+    });
+  });
+}
 
 function renderOutOfOrderManagement(content) {
   const topSelector = document.getElementById("site-selector");
@@ -1322,6 +1485,66 @@ function renderGroupCountForm(site, groupKey, groupName, type) {
 }
 
 // ===================== CLOSING: INVENTORY COUNT HISTORY (Superadmin/Super User) =====================
+function renderClosingHistoryPanel(content) {
+  content.innerHTML = `<div id="closing-walkthrough-history-section"></div><div id="closing-inventory-history-section"></div>`;
+  renderClosingWalkthroughHistory(document.getElementById("closing-walkthrough-history-section"));
+  renderInventoryCountHistory(document.getElementById("closing-inventory-history-section"));
+}
+
+function renderClosingWalkthroughHistory(container) {
+  const topSelector = document.getElementById("site-selector");
+  const site = hasRole(currentUser, "superadmin") ? topSelector.value : currentUser.site;
+
+  if (hasRole(currentUser, "superadmin") && site === "all") {
+    container.innerHTML = "";
+    return;
+  }
+
+  container.innerHTML = `<div class="card"><p style="color:var(--muted);">Loading closing walkthroughs...</p></div>`;
+
+  db.ref(`sites/${site}/closingWalkthroughs`).limitToLast(10).once("value").then((snap) => {
+    if (!snap.exists()) {
+      container.innerHTML = `<div class="panel-placeholder">No closing walkthroughs submitted yet for ${SITES[site]}.</div>`;
+      return;
+    }
+
+    const reports = [];
+    snap.forEach((child) => reports.push(child.val()));
+    reports.reverse();
+
+    const cardsHtml = reports.map((r) => {
+      const when = r.timestamp ? new Date(r.timestamp).toLocaleString() : "—";
+      const groupRows = Object.values(r.groupReports || {}).map((g) => {
+        const noAnswers = CLOSING_CHECKLIST_QUESTIONS.filter(q => g.answers && g.answers[q.key] === "no");
+        const photos = ["floor", "sink"].filter(t => g.photoURLs && g.photoURLs[t]).map(t =>
+          `<a href="${g.photoURLs[t]}" target="_blank" style="margin-right:10px; font-size:0.8rem;">${t === "floor" ? "Floor photo" : "Sink photo"} ↗</a>`
+        ).join("");
+
+        return `
+          <div style="padding:8px 0; border-top:1px solid var(--border); font-size:0.85rem;">
+            <strong>${g.groupName}</strong>
+            <div style="margin:4px 0;">${photos || "<span style='color:var(--muted);'>No photos</span>"}</div>
+            ${noAnswers.length
+              ? `<div style="color:var(--danger);">${noAnswers.map(q => q.label).join(", ")}${g.notes ? " — " + g.notes : ""}</div>`
+              : `<div style="color:var(--success);">All checks passed</div>`
+            }
+          </div>
+        `;
+      }).join("");
+
+      return `
+        <div class="card" style="margin-bottom:10px;">
+          <div style="font-weight:600; margin-bottom:4px;">${r.submittedByName}</div>
+          <div style="color:var(--muted); font-size:0.75rem;">${when}</div>
+          ${groupRows}
+        </div>
+      `;
+    }).join("");
+
+    container.innerHTML = `<h3 style="color:var(--navy); margin-bottom:14px;">Closing Walkthroughs — ${SITES[site]}</h3>` + cardsHtml;
+  });
+}
+
 function renderInventoryCountHistory(content) {
   const topSelector = document.getElementById("site-selector");
   const site = hasRole(currentUser, "superadmin") ? topSelector.value : currentUser.site;
