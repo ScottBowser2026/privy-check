@@ -499,6 +499,19 @@ function renderFlagUnitForm(content) {
 
 // ===================== OUT-OF-ORDER: SUPERADMIN / SUPERUSER MANAGEMENT =====================
 // ===================== DURING-EVENT: STATUS REPORT (User signs off on assigned units) =====================
+// ===================== DURING-EVENT: STATUS REPORT (User signs off per location group) =====================
+// Reporting happens per location group (not per individual stall) to keep this
+// usable when a site has dozens of toilets. Toilets themselves can still be
+// flagged individually within a group when there's a real issue — the other
+// fixture checks (paper towels, hand towels, soap, floor) apply to the whole
+// location, since those aren't usually tracked stall-by-stall.
+const FIXTURE_CHECKS = [
+  { key: "paperTowels", label: "Paper Towels", options: ["Good", "Running Low", "Empty"] },
+  { key: "handTowels", label: "Hand Towels", options: ["Good", "Running Low", "Empty"] },
+  { key: "soap", label: "Soap", options: ["Good", "Running Low", "Empty"] },
+  { key: "floor", label: "Floor Conditions", options: ["Clean", "Needs Attention", "Wet / Hazard"] }
+];
+
 function renderStatusReportEntry(content) {
   const site = currentUser.site;
   content.innerHTML = `<div class="card"><p style="color:var(--muted);">Loading your assigned units...</p></div>`;
@@ -509,46 +522,82 @@ function renderStatusReportEntry(content) {
       return;
     }
     const allUnits = snap.val();
-    const units = Object.fromEntries(Object.entries(allUnits).filter(([, u]) => u.assignedTo && u.assignedTo[currentUser.uid]));
+    const myUnits = Object.entries(allUnits).filter(([, u]) => u.assignedTo && u.assignedTo[currentUser.uid]);
 
-    if (!Object.keys(units).length) {
+    if (!myUnits.length) {
       content.innerHTML = `<div class="panel-placeholder">No units are currently assigned to you. Ask your Super User to assign you a unit in the Pre-Event tab.</div>`;
       return;
     }
 
+    // Group the attendant's assigned units by location group
+    const groups = {};
+    myUnits.forEach(([key, u]) => {
+      const groupKey = u.name.trim().replace(/[.#$/\[\]]/g, "_");
+      if (!groups[groupKey]) groups[groupKey] = { name: u.name.trim(), units: [] };
+      groups[groupKey].units.push({ key, ...u });
+    });
+
     const reasonOptions = DEFAULT_OOO_REASONS.map(r => `<option value="${r}">${r}</option>`).join("");
 
-    const unitBlocks = Object.entries(units).map(([key, u]) => `
-      <div class="card" style="margin-bottom:10px;" data-unit-key="${key}">
-        <strong>${u.name}</strong> <span style="color:var(--muted); font-size:0.8rem;">${u.type}${u.location ? " — " + u.location : ""}</span>
-        <div style="margin-top:10px; display:flex; gap:16px; flex-wrap:wrap;">
-          <label style="cursor:pointer;"><input type="radio" name="status-${key}" class="status-radio" value="good" checked> Good</label>
-          <label style="cursor:pointer;"><input type="radio" name="status-${key}" class="status-radio" value="needsAttention"> Needs Attention</label>
-          <label style="cursor:pointer;"><input type="radio" name="status-${key}" class="status-radio" value="outOfOrder"> Out of Order</label>
+    const groupBlocks = Object.entries(groups).map(([groupKey, group]) => {
+      const toiletUnitCheckboxes = group.units.map(u => `
+        <label style="display:block; font-size:0.85rem; margin-bottom:4px; cursor:pointer;">
+          <input type="checkbox" class="toilet-issue-checkbox" value="${u.key}" data-name="${u.name} (${u.type})"> ${u.name} (${u.type})
+        </label>
+      `).join("");
+
+      const fixtureBlocks = FIXTURE_CHECKS.map(f => `
+        <div style="margin-bottom:10px;">
+          <label style="display:block; font-size:0.8rem; color:var(--muted); margin-bottom:4px;">${f.label}</label>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            ${f.options.map((opt, i) => `
+              <label style="cursor:pointer; font-size:0.85rem;">
+                <input type="radio" name="${f.key}-${groupKey}" class="fixture-radio" data-fixture="${f.key}" value="${opt}" ${i === 0 ? "checked" : ""}> ${opt}
+              </label>
+            `).join("")}
+          </div>
         </div>
-        <div class="status-detail" style="display:none; margin-top:10px;">
-          <label style="display:block; font-size:0.8rem; color:var(--muted); margin-bottom:4px;">Issue</label>
-          <select class="status-reason" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; margin-bottom:8px;">
-            ${reasonOptions}
-          </select>
-          <label style="display:block; font-size:0.8rem; color:var(--muted); margin-bottom:4px;">Notes</label>
-          <textarea class="status-notes" rows="2" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; font-family:inherit;"></textarea>
+      `).join("");
+
+      return `
+        <div class="card" style="margin-bottom:10px;" data-group-key="${groupKey}">
+          <h4 style="color:var(--navy); margin-bottom:12px;">${group.name}</h4>
+
+          <div style="margin-bottom:14px;">
+            <label style="display:block; font-size:0.8rem; color:var(--muted); margin-bottom:6px;">Toilets</label>
+            <div style="display:flex; gap:16px; margin-bottom:8px;">
+              <label style="cursor:pointer;"><input type="radio" name="toilets-${groupKey}" class="toilets-radio" value="good" checked> All Good</label>
+              <label style="cursor:pointer;"><input type="radio" name="toilets-${groupKey}" class="toilets-radio" value="issues"> Report an Issue</label>
+            </div>
+            <div class="toilets-issue-detail" style="display:none; padding:10px; background:#f4f2ee; border-radius:6px;">
+              <p style="font-size:0.8rem; color:var(--muted); margin-bottom:6px;">Which unit(s)?</p>
+              ${toiletUnitCheckboxes}
+              <label style="display:block; font-size:0.8rem; color:var(--muted); margin:8px 0 4px;">Issue</label>
+              <select class="toilets-reason-select" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; margin-bottom:8px;">
+                ${reasonOptions}
+              </select>
+              <label style="display:block; font-size:0.8rem; color:var(--muted); margin-bottom:4px;">Notes</label>
+              <textarea class="toilets-notes" rows="2" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; font-family:inherit;"></textarea>
+            </div>
+          </div>
+
+          ${fixtureBlocks}
         </div>
-      </div>
-    `).join("");
+      `;
+    }).join("");
 
     content.innerHTML = `
       <div class="card">
         <h3 style="color:var(--navy); margin-bottom:8px;">During-Event Status Report — ${SITES[site]}</h3>
         <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">
-          Check your assigned units and report their condition. Marking a unit "Out of Order" automatically flags it for maintenance, same as the Flag a Unit tab.
+          One report per location, covering all your assigned units there. Reporting a toilet issue automatically flags that specific unit for maintenance.
         </p>
       </div>
-      ${unitBlocks}
+      ${groupBlocks}
       <div class="card">
         <label style="display:flex; align-items:center; gap:8px; cursor:pointer; margin-bottom:14px;">
           <input type="checkbox" id="status-signoff-checkbox" style="width:18px; height:18px;">
-          <span>I have personally checked these units and the information above is accurate.</span>
+          <span>I have personally checked these locations and the information above is accurate.</span>
         </label>
         <button id="status-submit-btn" style="padding:10px 20px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer; font-weight:600;">
           Submit Status Report
@@ -557,12 +606,12 @@ function renderStatusReportEntry(content) {
       </div>
     `;
 
-    // Toggle the reason/notes block based on selected status
-    content.querySelectorAll(".card[data-unit-key]").forEach((card) => {
-      const detail = card.querySelector(".status-detail");
-      card.querySelectorAll(".status-radio").forEach((radio) => {
+    // Toggle toilet issue detail visibility
+    content.querySelectorAll(".card[data-group-key]").forEach((card) => {
+      const detail = card.querySelector(".toilets-issue-detail");
+      card.querySelectorAll(".toilets-radio").forEach((radio) => {
         radio.addEventListener("change", () => {
-          detail.style.display = radio.value === "good" ? "none" : "block";
+          detail.style.display = radio.value === "issues" ? "block" : "none";
         });
       });
     });
@@ -576,28 +625,43 @@ function renderStatusReportEntry(content) {
         return;
       }
 
-      const unitReports = {};
+      const groupReports = {};
       const newFlags = [];
       let hasError = false;
 
-      content.querySelectorAll(".card[data-unit-key]").forEach((card) => {
-        const key = card.dataset.unitKey;
-        const status = card.querySelector(".status-radio:checked").value;
-        const reason = card.querySelector(".status-reason")?.value || "";
-        const notes = card.querySelector(".status-notes")?.value.trim() || "";
+      content.querySelectorAll(".card[data-group-key]").forEach((card) => {
+        const groupKey = card.dataset.groupKey;
+        const groupName = groups[groupKey].name;
+        const toiletsStatus = card.querySelector(".toilets-radio:checked").value;
 
-        if (status !== "good" && !reason) hasError = true;
+        const groupReport = { groupName, toiletsStatus, fixtures: {} };
 
-        unitReports[key] = { unitName: units[key].name, status, reason: status === "good" ? "" : reason, notes };
+        FIXTURE_CHECKS.forEach((f) => {
+          const checked = card.querySelector(`.fixture-radio[data-fixture="${f.key}"]:checked`);
+          groupReport.fixtures[f.key] = checked ? checked.value : f.options[0];
+        });
 
-        if (status === "outOfOrder") {
-          newFlags.push({ unitKey: key, unitName: units[key].name, reason, notes });
+        if (toiletsStatus === "issues") {
+          const checkedUnits = Array.from(card.querySelectorAll(".toilet-issue-checkbox:checked"));
+          const reason = card.querySelector(".toilets-reason-select").value;
+          const notes = card.querySelector(".toilets-notes").value.trim();
+
+          if (!checkedUnits.length) {
+            hasError = true;
+          } else {
+            groupReport.toiletIssues = checkedUnits.map(cb => ({ unitKey: cb.value, unitName: cb.dataset.name, reason, notes }));
+            checkedUnits.forEach((cb) => {
+              newFlags.push({ unitKey: cb.value, unitName: cb.dataset.name, reason, notes });
+            });
+          }
         }
+
+        groupReports[groupKey] = groupReport;
       });
 
       if (hasError) {
         statusEl.style.color = "var(--danger)";
-        statusEl.textContent = "Pick an issue for any unit marked Needs Attention or Out of Order.";
+        statusEl.textContent = "Select which unit(s) have the issue for any location reporting a toilet problem.";
         return;
       }
 
@@ -610,7 +674,7 @@ function renderStatusReportEntry(content) {
         submittedByName: `${currentUser.firstName} ${currentUser.lastName}`,
         timestamp: firebase.database.ServerValue.TIMESTAMP,
         signedOff: true,
-        unitReports
+        groupReports
       })];
 
       newFlags.forEach((f) => {
@@ -660,27 +724,38 @@ function renderStatusReportHistory(content) {
     snap.forEach((child) => reports.push(child.val()));
     reports.reverse();
 
-    const STATUS_INFO = {
-      good: { label: "Good", color: "var(--success)" },
-      needsAttention: { label: "Needs Attention", color: "var(--warn)" },
-      outOfOrder: { label: "Out of Order", color: "var(--danger)" }
+    const FIXTURE_COLOR = (val) => {
+      if (["Good", "Clean"].includes(val)) return "var(--success)";
+      if (["Running Low", "Needs Attention"].includes(val)) return "var(--warn)";
+      return "var(--danger)"; // Empty, Wet/Hazard
     };
 
     const cardsHtml = reports.map((r) => {
       const when = r.timestamp ? new Date(r.timestamp).toLocaleString() : "—";
-      const unitRows = Object.values(r.unitReports || {}).map((u) => {
-        const info = STATUS_INFO[u.status] || { label: u.status, color: "var(--muted)" };
-        return `<div style="padding:4px 0; font-size:0.85rem;">
-          <strong>${u.unitName}</strong> — <span style="color:${info.color}; font-weight:600;">${info.label}</span>
-          ${u.reason ? ` — ${u.reason}${u.notes ? ": " + u.notes : ""}` : ""}
-        </div>`;
+      const groupRows = Object.values(r.groupReports || {}).map((g) => {
+        const toiletsLine = g.toiletsStatus === "issues"
+          ? `<div style="color:var(--danger); font-weight:600;">Toilets: ${(g.toiletIssues || []).map(i => i.unitName).join(", ")} — ${(g.toiletIssues || [])[0]?.reason || ""}</div>`
+          : `<div style="color:var(--success);">Toilets: Good</div>`;
+        const fixtureLine = FIXTURE_CHECKS.map(f => {
+          const val = g.fixtures ? g.fixtures[f.key] : null;
+          if (!val) return "";
+          return `<span style="margin-right:12px; color:${FIXTURE_COLOR(val)};">${f.label}: ${val}</span>`;
+        }).join("");
+
+        return `
+          <div style="padding:8px 0; border-top:1px solid var(--border); font-size:0.85rem;">
+            <strong>${g.groupName}</strong>
+            ${toiletsLine}
+            <div style="margin-top:4px;">${fixtureLine}</div>
+          </div>
+        `;
       }).join("");
 
       return `
         <div class="card" style="margin-bottom:10px;">
           <div style="font-weight:600; margin-bottom:4px;">${r.submittedByName}</div>
-          <div style="color:var(--muted); font-size:0.75rem; margin-bottom:10px;">${when}</div>
-          ${unitRows}
+          <div style="color:var(--muted); font-size:0.75rem;">${when}</div>
+          ${groupRows}
         </div>
       `;
     }).join("");
@@ -688,6 +763,7 @@ function renderStatusReportHistory(content) {
     content.innerHTML = `<h3 style="color:var(--navy); margin-bottom:14px;">Status Reports — ${SITES[site]}</h3>` + cardsHtml;
   });
 }
+
 
 function renderOutOfOrderManagement(content) {
   const topSelector = document.getElementById("site-selector");
