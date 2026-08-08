@@ -16,6 +16,18 @@ const auth = firebase.auth();
 const storage = firebase.storage();
 const functions = firebase.functions();
 
+// EmailJS — used to post Closing Walkthrough results into Teams channels
+// (Teams channels accept posts via email, so this is just a regular email send).
+emailjs.init("sB7w0MyBj_u6ayu_0");
+const CLOSING_WALKTHROUGH_EMAILJS_SERVICE_ID = "service_w8st9lg";
+const CLOSING_WALKTHROUGH_EMAILJS_TEMPLATE_ID = "template_ph5468d";
+
+// Add each site's Teams channel email as you get it — sites without one here
+// simply won't get a Teams post (still saves to the database either way).
+const TEAMS_CHANNEL_EMAILS = {
+  parf: "589b44d2.parenfaire.com@amer.teams.ms"
+};
+
 // Sign in anonymously as soon as the app loads, so database rules (auth != null)
 // are satisfied before any PIN lookup happens. Same pattern as Punch List.
 const authReady = auth.signInAnonymously().catch((err) => {
@@ -880,7 +892,7 @@ function renderClosingWalkthrough(container) {
       statusEl.style.color = "var(--muted)";
       statusEl.textContent = "Uploading photos...";
 
-      const uploadTasks = [];
+      const groupPromises = [];
       const groupReports = {};
 
       groupCards.forEach((card) => {
@@ -893,23 +905,50 @@ function renderClosingWalkthrough(container) {
         });
         const notes = card.querySelector(".closing-notes").value.trim();
         const photoURLs = {};
+        const photoUploadTasks = [];
 
         card.querySelectorAll(".closing-photo-input").forEach((input) => {
           if (input.files.length) {
             const file = input.files[0];
             const photoType = input.dataset.photoType;
             const path = `privy-check/${site}/${groupKey}/${Date.now()}-${photoType}.jpg`;
-            const uploadTask = storage.ref(path).put(file).then(snapshot => snapshot.ref.getDownloadURL()).then((url) => {
-              photoURLs[photoType] = url;
-            });
-            uploadTasks.push(uploadTask);
+            photoUploadTasks.push(
+              storage.ref(path).put(file).then(snapshot => snapshot.ref.getDownloadURL()).then((url) => {
+                photoURLs[photoType] = url;
+              })
+            );
           }
         });
 
-        groupReports[groupKey] = { groupName, answers, notes, photoURLs };
+        // Once this group's photos are uploaded, post it to Teams right away —
+        // per your "one message per location as it's done" preference — rather
+        // than waiting for the whole walkthrough (which could cover many locations).
+        const groupPromise = Promise.all(photoUploadTasks).then(() => {
+          groupReports[groupKey] = { groupName, answers, notes, photoURLs };
+
+          const teamsEmail = TEAMS_CHANNEL_EMAILS[site];
+          if (!teamsEmail || typeof emailjs === "undefined") return;
+
+          const checklistSummary = CLOSING_CHECKLIST_QUESTIONS.map(q =>
+            `${q.label} ${answers[q.key] === "no" ? "❌ NO" : "✅ Yes"}`
+          ).join("\n") + (notes ? `\n\nNotes: ${notes}` : "");
+
+          return emailjs.send(CLOSING_WALKTHROUGH_EMAILJS_SERVICE_ID, CLOSING_WALKTHROUGH_EMAILJS_TEMPLATE_ID, {
+            to_email: teamsEmail,
+            site_name: SITES[site],
+            group_name: groupName,
+            submitted_by: `${currentUser.firstName} ${currentUser.lastName}`,
+            timestamp: new Date().toLocaleString(),
+            checklist_summary: checklistSummary,
+            floor_photo_url: photoURLs.floor || "(no floor photo)",
+            sink_photo_url: photoURLs.sink || "(no sink photo)"
+          }).catch((err) => console.error("Teams email failed for " + groupName, err));
+        });
+
+        groupPromises.push(groupPromise);
       });
 
-      Promise.all(uploadTasks).then(() => {
+      Promise.all(groupPromises).then(() => {
         statusEl.textContent = "Saving report...";
         return db.ref(`sites/${site}/closingWalkthroughs`).push({
           submittedByUid: currentUser.uid,
