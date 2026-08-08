@@ -2705,6 +2705,12 @@ function renderAdminPanel(content) {
     const allOrgWide = checkedRoles.every(r => r === "superadmin" || r === "executive");
     const site = allOrgWide ? "all" : addSiteSelect.value;
 
+    if (!allOrgWide && (!site || site === "all")) {
+      statusEl.style.color = "var(--danger)";
+      statusEl.textContent = "Pick a specific site — these roles need to belong to one site, not 'All Sites'.";
+      return;
+    }
+
     statusEl.style.color = "var(--muted)";
     statusEl.textContent = "Adding...";
 
