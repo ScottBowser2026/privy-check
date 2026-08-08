@@ -1525,9 +1525,204 @@ function renderGroupCountForm(site, groupKey, groupName, type) {
 
 // ===================== CLOSING: INVENTORY COUNT HISTORY (Superadmin/Super User) =====================
 function renderClosingHistoryPanel(content) {
-  content.innerHTML = `<div id="closing-walkthrough-history-section"></div><div id="closing-inventory-history-section"></div>`;
+  content.innerHTML = `<div id="daily-completion-section"></div><div id="master-inventory-section"></div><div id="closing-walkthrough-history-section"></div><div id="closing-inventory-history-section"></div>`;
+  renderDailyCompletionDashboard(document.getElementById("daily-completion-section"));
+  renderMasterInventoryTable(document.getElementById("master-inventory-section"));
   renderClosingWalkthroughHistory(document.getElementById("closing-walkthrough-history-section"));
   renderInventoryCountHistory(document.getElementById("closing-inventory-history-section"));
+}
+
+// ===================== DAILY COMPLETION DASHBOARD (Superadmin/Super User) =====================
+function renderDailyCompletionDashboard(container) {
+  const topSelector = document.getElementById("site-selector");
+  const site = hasRole(currentUser, "superadmin") ? topSelector.value : currentUser.site;
+
+  if (hasRole(currentUser, "superadmin") && site === "all") {
+    container.innerHTML = "";
+    return;
+  }
+
+  container.innerHTML = `<div class="card"><p style="color:var(--muted);">Loading today's completion status...</p></div>`;
+
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+  const todayCutoff = startOfToday.getTime();
+
+  getLocationGroups(site).then((groups) => {
+    const groupKeys = Object.keys(groups);
+    if (!groupKeys.length) {
+      container.innerHTML = "";
+      return;
+    }
+
+    const fetches = groupKeys.map(key =>
+      Promise.all([
+        db.ref(`sites/${site}/groupInventory/${key}/Female/counts`).once("value"),
+        db.ref(`sites/${site}/groupInventory/${key}/Male/counts`).once("value")
+      ]).then(([femaleSnap, maleSnap]) => {
+        let beginToday = false, endToday = false;
+        [femaleSnap, maleSnap].forEach((snap) => {
+          if (!snap.exists()) return;
+          snap.forEach((child) => {
+            const c = child.val();
+            if (c.timestamp >= todayCutoff) {
+              if (c.type === "beginning") beginToday = true;
+              if (c.type === "ending") endToday = true;
+            }
+          });
+        });
+        return { key, name: groups[key].name, beginToday, endToday };
+      })
+    );
+
+    Promise.all(fetches).then((groupResults) => {
+      db.ref(`sites/${site}/closingWalkthroughs`).once("value").then((wSnap) => {
+        const walkthroughToday = new Set();
+        if (wSnap.exists()) {
+          wSnap.forEach((child) => {
+            const r = child.val();
+            if (r.timestamp >= todayCutoff) {
+              Object.keys(r.groupReports || {}).forEach((gk) => walkthroughToday.add(gk));
+            }
+          });
+        }
+
+        const check = (ok) => ok
+          ? `<span style="color:var(--success); font-weight:600;">✓</span>`
+          : `<span style="color:var(--danger); font-weight:600;">✗</span>`;
+
+        const rows = groupResults.map(g => `
+          <tr>
+            <td style="padding:8px; border-bottom:1px solid var(--border);">${g.name}</td>
+            <td style="padding:8px; border-bottom:1px solid var(--border); text-align:center;">${check(g.beginToday)}</td>
+            <td style="padding:8px; border-bottom:1px solid var(--border); text-align:center;">${check(g.endToday)}</td>
+            <td style="padding:8px; border-bottom:1px solid var(--border); text-align:center;">${check(walkthroughToday.has(g.key))}</td>
+          </tr>
+        `).join("");
+
+        container.innerHTML = `
+          <div class="card">
+            <h3 style="color:var(--navy); margin-bottom:8px;">Today's Completion — ${SITES[site]}</h3>
+            <p style="color:var(--muted); font-size:0.8rem; margin-bottom:14px;">Inventory and Closing Walkthrough should be done daily. This resets at midnight.</p>
+            <table style="width:100%; border-collapse:collapse; font-size:0.85rem;">
+              <thead>
+                <tr style="text-align:left; color:var(--muted);">
+                  <th style="padding:8px; border-bottom:2px solid var(--border);">Location</th>
+                  <th style="padding:8px; border-bottom:2px solid var(--border); text-align:center;">Beginning Count</th>
+                  <th style="padding:8px; border-bottom:2px solid var(--border); text-align:center;">Ending Count</th>
+                  <th style="padding:8px; border-bottom:2px solid var(--border); text-align:center;">Closing Walkthrough</th>
+                </tr>
+              </thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
+        `;
+      });
+    });
+  });
+}
+
+// ===================== MASTER INVENTORY TABLE (Superadmin/Super User: all locations at once) =====================
+function renderMasterInventoryTable(container) {
+  const topSelector = document.getElementById("site-selector");
+  const site = hasRole(currentUser, "superadmin") ? topSelector.value : currentUser.site;
+
+  if (hasRole(currentUser, "superadmin") && site === "all") {
+    container.innerHTML = "";
+    return;
+  }
+
+  container.innerHTML = `<div class="card"><p style="color:var(--muted);">Loading master inventory table...</p></div>`;
+
+  getLocationGroups(site).then((groups) => {
+    const groupKeys = Object.keys(groups);
+    if (!groupKeys.length) {
+      container.innerHTML = "";
+      return;
+    }
+
+    const fetches = groupKeys.map(key =>
+      Promise.all([
+        db.ref(`sites/${site}/groupInventory/${key}/Female/items`).once("value"),
+        db.ref(`sites/${site}/groupInventory/${key}/Female/counts`).once("value"),
+        db.ref(`sites/${site}/groupInventory/${key}/Male/items`).once("value"),
+        db.ref(`sites/${site}/groupInventory/${key}/Male/counts`).once("value")
+      ]).then(([fi, fc, mi, mc]) => ({ key, name: groups[key].name, fi, fc, mi, mc }))
+    );
+
+    Promise.all(fetches).then((results) => {
+      function latestByType(itemsSnap, countsSnap) {
+        const items = itemsSnap.exists() ? itemsSnap.val() : {};
+        const latest = {};
+        Object.keys(items).forEach((k) => { latest[k] = { beginning: null, additionSum: 0, ending: null }; });
+        if (countsSnap.exists()) {
+          countsSnap.forEach((child) => {
+            const entry = child.val();
+            Object.entries(entry.counts || {}).forEach(([k, c]) => {
+              if (!latest[k]) latest[k] = { beginning: null, additionSum: 0, ending: null };
+              if (entry.type === "beginning") latest[k].beginning = c.count;
+              if (entry.type === "addition") latest[k].additionSum += c.count;
+              if (entry.type === "ending") latest[k].ending = c.count;
+            });
+          });
+        }
+        return { items, latest };
+      }
+
+      const allRows = [];
+      results.forEach(({ name, fi, fc, mi, mc }) => {
+        [["Female", fi, fc], ["Male", mi, mc]].forEach(([sex, itemsSnap, countsSnap]) => {
+          const { items, latest } = latestByType(itemsSnap, countsSnap);
+          Object.entries(items).forEach(([key, item]) => {
+            const l = latest[key];
+            const orderQty = l.ending !== null ? Math.max(0, item.parLevel - l.ending) : null;
+            allRows.push({ location: name, sex, itemName: item.name, par: item.parLevel, beginning: l.beginning, additions: l.additionSum, ending: l.ending, orderQty });
+          });
+        });
+      });
+
+      if (!allRows.length) {
+        container.innerHTML = "";
+        return;
+      }
+
+      const rowsHtml = allRows.map(r => `
+        <tr>
+          <td style="padding:6px 8px; border-bottom:1px solid var(--border);">${r.location}</td>
+          <td style="padding:6px 8px; border-bottom:1px solid var(--border);">${r.sex}</td>
+          <td style="padding:6px 8px; border-bottom:1px solid var(--border);">${r.itemName}</td>
+          <td style="padding:6px 8px; border-bottom:1px solid var(--border);">${r.par}</td>
+          <td style="padding:6px 8px; border-bottom:1px solid var(--border);">${r.beginning ?? "—"}</td>
+          <td style="padding:6px 8px; border-bottom:1px solid var(--border);">${r.additions || "—"}</td>
+          <td style="padding:6px 8px; border-bottom:1px solid var(--border);">${r.ending ?? "—"}</td>
+          <td style="padding:6px 8px; border-bottom:1px solid var(--border); font-weight:600; ${r.orderQty > 0 ? "color:var(--danger);" : ""}">${r.orderQty ?? "—"}</td>
+        </tr>
+      `).join("");
+
+      container.innerHTML = `
+        <div class="card">
+          <h3 style="color:var(--navy); margin-bottom:14px;">Master Inventory — ${SITES[site]}</h3>
+          <div style="overflow-x:auto;">
+            <table style="width:100%; border-collapse:collapse; font-size:0.8rem; min-width:600px;">
+              <thead>
+                <tr style="text-align:left; color:var(--muted);">
+                  <th style="padding:6px 8px; border-bottom:2px solid var(--border);">Location</th>
+                  <th style="padding:6px 8px; border-bottom:2px solid var(--border);">Sex</th>
+                  <th style="padding:6px 8px; border-bottom:2px solid var(--border);">Item</th>
+                  <th style="padding:6px 8px; border-bottom:2px solid var(--border);">Par</th>
+                  <th style="padding:6px 8px; border-bottom:2px solid var(--border);">Beginning</th>
+                  <th style="padding:6px 8px; border-bottom:2px solid var(--border);">Additions</th>
+                  <th style="padding:6px 8px; border-bottom:2px solid var(--border);">Ending</th>
+                  <th style="padding:6px 8px; border-bottom:2px solid var(--border);">Order Qty</th>
+                </tr>
+              </thead>
+              <tbody>${rowsHtml}</tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    });
+  });
 }
 
 function renderClosingWalkthroughHistory(container) {
