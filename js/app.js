@@ -336,6 +336,7 @@ function setupMedicalAlertButton() {
 function setupSiteSelector() {
   const selector = document.getElementById("site-selector");
   selector.innerHTML = "";
+  selector.disabled = false; // reset — a prior login in this same tab may have disabled it
 
   if (hasRole(currentUser, "superadmin")) {
     const allOpt = document.createElement("option");
@@ -357,10 +358,13 @@ function setupSiteSelector() {
     selector.disabled = true;
   }
 
-  selector.addEventListener("change", () => {
-    const activeTabBtn = document.querySelector("#main-tabs button.active");
-    if (activeTabBtn) renderTabContent(activeTabBtn.dataset.tabId);
-  });
+  if (!selector.dataset.wired) {
+    selector.dataset.wired = "true";
+    selector.addEventListener("change", () => {
+      const activeTabBtn = document.querySelector("#main-tabs button.active");
+      if (activeTabBtn) renderTabContent(activeTabBtn.dataset.tabId);
+    });
+  }
 }
 
 // Each role contributes a list of tabs. IDs are unique per distinct view so
