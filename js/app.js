@@ -1174,7 +1174,7 @@ function renderUnitOpenCloseToggles(container) {
     if (usersSnap.exists()) {
       usersSnap.forEach((child) => {
         const u = child.val();
-        if (hasRole(u, "user") && u.site === site && u.active !== false) {
+        if ((hasRole(u, "user") || hasRole(u, "superuser")) && u.site === site && u.active !== false) {
           attendants.push({ uid: child.key, name: `${u.firstName} ${u.lastName}` });
         }
       });
