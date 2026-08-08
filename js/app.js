@@ -2015,6 +2015,31 @@ function renderAdminPanel(content) {
       <div id="csv-import-status" style="margin-top:12px; font-size:0.85rem;"></div>
     </div>
     <div class="card">
+      <h3 style="color:var(--navy); margin-bottom:14px;">Add Unit</h3>
+      <div style="display:grid; grid-template-columns: 2fr 2fr 1fr; gap:12px; margin-bottom:12px;">
+        <div>
+          <label style="display:block; font-size:0.8rem; color:var(--muted); margin-bottom:4px;">Unit Name</label>
+          <input type="text" id="add-unit-name" placeholder="e.g. King Loo" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px;">
+        </div>
+        <div>
+          <label style="display:block; font-size:0.8rem; color:var(--muted); margin-bottom:4px;">Location</label>
+          <input type="text" id="add-unit-location" placeholder="e.g. Absinthe Area" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px;">
+        </div>
+        <div>
+          <label style="display:block; font-size:0.8rem; color:var(--muted); margin-bottom:4px;">Type</label>
+          <select id="add-unit-type" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px;">
+            <option value="Male">Male</option>
+            <option value="Female">Female</option>
+            <option value="ADA">ADA</option>
+          </select>
+        </div>
+      </div>
+      <button id="add-unit-btn" style="padding:10px 20px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer;">
+        Add Unit
+      </button>
+      <div id="add-unit-status" style="margin-top:12px; font-size:0.85rem;"></div>
+    </div>
+    <div class="card">
       <h3 style="color:var(--navy); margin-bottom:14px;">Current Units — <span id="units-table-site-label"></span></h3>
       <div id="units-table-container">
         <p style="color:var(--muted);">Select a site above to view its units.</p>
@@ -2234,6 +2259,43 @@ function renderAdminPanel(content) {
       }
     };
     reader.readAsArrayBuffer(fileInput.files[0]);
+  });
+
+  document.getElementById("add-unit-btn").addEventListener("click", () => {
+    const site = siteSelect.value;
+    const statusEl = document.getElementById("add-unit-status");
+    const name = document.getElementById("add-unit-name").value.trim();
+    const location = document.getElementById("add-unit-location").value.trim();
+    const type = document.getElementById("add-unit-type").value;
+
+    if (!name) {
+      statusEl.style.color = "var(--danger)";
+      statusEl.textContent = "Unit name is required.";
+      return;
+    }
+
+    db.ref(`sites/${site}/units`).once("value").then((snap) => {
+      const existing = snap.exists() ? snap.val() : {};
+      const baseKey = `${name}__${type}`.replace(/[.#$/\[\]]/g, "_");
+      let occurrence = 1;
+      Object.values(existing).forEach((u) => {
+        if (u.name === name && u.type === type) occurrence++;
+      });
+      const unitKey = occurrence > 1 ? `${baseKey}_${occurrence}` : baseKey;
+
+      db.ref(`sites/${site}/units/${unitKey}`).set({ name, location, type, status: "ok" })
+        .then(() => {
+          statusEl.style.color = "var(--success)";
+          statusEl.textContent = `Added ${name} (${type}).`;
+          document.getElementById("add-unit-name").value = "";
+          document.getElementById("add-unit-location").value = "";
+          loadUnitsTable(site);
+        })
+        .catch((err) => {
+          statusEl.style.color = "var(--danger)";
+          statusEl.textContent = "Failed to add: " + err.message;
+        });
+    });
   });
 
   document.getElementById("csv-template-btn").addEventListener("click", () => {
