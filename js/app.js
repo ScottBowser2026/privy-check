@@ -404,7 +404,7 @@ function getAssignedGroupKeys(site, uid) {
     const keys = new Set();
     if (snap.exists()) {
       Object.values(snap.val()).forEach((unit) => {
-        if (unit.assignedToUid === uid) {
+        if (unit.assignedTo && unit.assignedTo[uid]) {
           keys.add(unit.name.trim().replace(/[.#$/\[\]]/g, "_"));
         }
       });
@@ -424,7 +424,7 @@ function renderFlagUnitForm(content) {
       return;
     }
     const allUnits = snap.val();
-    const units = Object.fromEntries(Object.entries(allUnits).filter(([, u]) => u.assignedToUid === currentUser.uid));
+    const units = Object.fromEntries(Object.entries(allUnits).filter(([, u]) => u.assignedTo && u.assignedTo[currentUser.uid]));
 
     if (!Object.keys(units).length) {
       content.innerHTML = `<div class="panel-placeholder">No units are currently assigned to you. Ask your Super User to assign you a unit in the Pre-Event tab.</div>`;
@@ -703,9 +703,9 @@ function renderUnitOpenCloseToggles(container) {
 
     const rows = Object.entries(units).map(([key, unit]) => {
       const isOpen = unit.isOpen !== false; // default to open if never set
-      const assignOptions = `<option value="">Unassigned</option>` + attendants.map(a =>
-        `<option value="${a.uid}" ${unit.assignedToUid === a.uid ? "selected" : ""}>${a.name}</option>`
-      ).join("");
+      const assignedUids = unit.assignedTo ? Object.keys(unit.assignedTo) : [];
+      const assignedNames = assignedUids.map(uid => unit.assignedTo[uid]).join(", ") || "Unassigned";
+
       return `
         <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid var(--border); flex-wrap:wrap; gap:8px;">
           <div>
@@ -713,8 +713,21 @@ function renderUnitOpenCloseToggles(container) {
           </div>
           <div style="display:flex; align-items:center; gap:10px;">
             ${canToggle
-              ? `<select class="unit-assign-select" data-key="${key}" style="padding:6px; border:1px solid var(--border); border-radius:6px; font-size:0.8rem;">${assignOptions}</select>`
-              : `<span style="color:var(--muted); font-size:0.8rem;">${unit.assignedToName || "Unassigned"}</span>`
+              ? `<details class="unit-assign-details" data-key="${key}">
+                  <summary style="cursor:pointer; padding:4px 10px; border:1px solid var(--border); border-radius:6px; font-size:0.8rem; display:inline-block;">${assignedNames} ▾</summary>
+                  <div style="margin-top:6px; padding:8px; border:1px solid var(--border); border-radius:6px; background:#fafafa; min-width:180px;">
+                    ${attendants.length
+                      ? attendants.map(a => `
+                          <label style="display:block; font-size:0.8rem; margin-bottom:4px; cursor:pointer;">
+                            <input type="checkbox" class="unit-assign-checkbox" value="${a.uid}" data-name="${a.name}" ${assignedUids.includes(a.uid) ? "checked" : ""}> ${a.name}
+                          </label>
+                        `).join("")
+                      : `<p style="color:var(--muted); font-size:0.8rem;">No User-role attendants for this site yet.</p>`
+                    }
+                    <button class="unit-assign-save-btn" data-key="${key}" style="margin-top:6px; padding:4px 10px; font-size:0.75rem; background:var(--navy); color:white; border:none; border-radius:4px; cursor:pointer;">Save</button>
+                  </div>
+                </details>`
+              : `<span style="color:var(--muted); font-size:0.8rem;">${assignedNames}</span>`
             }
             ${canToggle
               ? `<button class="unit-open-toggle" data-key="${key}" data-open="${isOpen}" style="padding:6px 16px; border-radius:14px; border:none; cursor:pointer; font-weight:600; font-size:0.8rem; ${isOpen ? "background:var(--success); color:white;" : "background:var(--danger); color:white;"}">${isOpen ? "Open" : "Closed"}</button>`
@@ -730,7 +743,7 @@ function renderUnitOpenCloseToggles(container) {
         <h3 style="color:var(--navy); margin-bottom:8px;">Unit Status & Assignment — ${SITES[site]}</h3>
         <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">
           ${canToggle
-            ? "Assign each unit to an attendant, and toggle it Open (ready for use) or Closed (not in service yet). Once assigned, that attendant's Flag/Closing/Request Supplies views only show their assigned units."
+            ? "Assign one or more attendants to each unit, and toggle it Open (ready for use) or Closed (not in service yet). Once assigned, an attendant's Flag/Closing/Request Supplies views only show units they're assigned to."
             : "View-only — you need to be marked MOD (on duty) to make changes. Ask your Superadmin to flip your MOD toggle in the Staff list."}
         </p>
         ${rows}
@@ -747,13 +760,22 @@ function renderUnitOpenCloseToggles(container) {
         });
       });
 
-      container.querySelectorAll(".unit-assign-select").forEach((select) => {
-        select.addEventListener("change", () => {
-          const key = select.dataset.key;
-          const uid = select.value;
-          const name = uid ? select.options[select.selectedIndex].text : null;
-          db.ref(`sites/${site}/units/${key}`).update({ assignedToUid: uid || null, assignedToName: name })
-            .catch((err) => alert("Failed to assign: " + err.message));
+      container.querySelectorAll(".unit-assign-save-btn").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const key = btn.dataset.key;
+          const details = container.querySelector(`.unit-assign-details[data-key="${key}"]`);
+          const checked = Array.from(details.querySelectorAll(".unit-assign-checkbox:checked"));
+
+          const assignedTo = {};
+          checked.forEach(cb => { assignedTo[cb.value] = cb.dataset.name; });
+
+          db.ref(`sites/${site}/units/${key}`).update({
+            assignedTo: checked.length ? assignedTo : null,
+            assignedToUid: null,  // clear legacy single-assignee field
+            assignedToName: null
+          })
+            .then(() => renderUnitOpenCloseToggles(container))
+            .catch((err) => alert("Failed to save assignment: " + err.message));
         });
       });
     }
