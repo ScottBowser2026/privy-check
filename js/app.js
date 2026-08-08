@@ -1504,8 +1504,8 @@ function renderAdminPanel(content) {
           <label style="display:block; font-size:0.8rem; color:var(--muted); margin-bottom:4px;">Roles (select one or more)</label>
           <div id="add-staff-role-checkboxes" style="padding:8px; border:1px solid var(--border); border-radius:6px;">
             ${(isSuperadmin
-              ? ["superadmin", "superuser", "user", "maintenance", "preevent", "executive", "inventory"]
-              : ["user", "maintenance", "preevent", "inventory", "superuser"]
+              ? ["superadmin", "superuser", "user", "maintenance", "preevent"]
+              : ["user", "maintenance", "preevent", "superuser"]
             ).map((r, i) => `
               <label style="display:inline-block; margin:2px 10px 2px 0; font-size:0.85rem; cursor:pointer;">
                 <input type="checkbox" class="add-staff-role-checkbox" value="${r}" ${r === "user" ? "checked" : ""}> ${ROLES[r].label}
@@ -2156,10 +2156,10 @@ function loadStaffTable(site) {
         <button class="phone-save-btn" data-uid="${u.uid}" style="padding:4px 8px; font-size:0.75rem; background:var(--navy); color:white; border:none; border-radius:4px; cursor:pointer; margin-left:4px;">Save</button>
       `;
       const userRoleKeys = getUserRoleKeys(u);
-      const canEditThisRole = isSuperadminViewer || (hasRole(currentUser, "superuser") && userRoleKeys.every(r => ["user", "maintenance", "preevent", "inventory", "superuser"].includes(r)));
+      const canEditThisRole = isSuperadminViewer || (hasRole(currentUser, "superuser") && userRoleKeys.every(r => ["user", "maintenance", "preevent", "superuser"].includes(r)));
       const editableRoleOptions = isSuperadminViewer
-        ? Object.keys(ROLES)
-        : ["user", "maintenance", "preevent", "inventory", "superuser"];
+        ? Object.keys(ROLES).filter(r => r !== "executive" && r !== "inventory")
+        : ["user", "maintenance", "preevent", "superuser"];
       const roleCell = canEditThisRole
         ? `<details class="role-edit-details" data-uid="${u.uid}">
             <summary style="cursor:pointer; padding:4px 8px; border:1px solid var(--border); border-radius:4px; display:inline-block; font-size:0.8rem;">${formatRoleLabels(u)} ▾</summary>
