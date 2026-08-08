@@ -35,6 +35,27 @@ const ROLES = {
   inventory: { label: "Inventory", scope: "site" }
 };
 
+// Checks if a user (either currentUser, or a raw record from /users during
+// staff-table rendering) holds a given role. Works with both the new "roles"
+// object and legacy single "role" string records.
+function hasRole(userObj, roleKey) {
+  if (!userObj) return false;
+  if (userObj.roles) return !!userObj.roles[roleKey];
+  return userObj.role === roleKey;
+}
+
+function getUserRoleKeys(userObj) {
+  if (!userObj) return [];
+  if (userObj.roles) return Object.keys(userObj.roles).filter(k => userObj.roles[k]);
+  return userObj.role ? [userObj.role] : [];
+}
+
+function formatRoleLabels(userObj) {
+  const keys = getUserRoleKeys(userObj);
+  if (!keys.length) return "—";
+  return keys.map(k => ROLES[k] ? ROLES[k].label : k).join(", ");
+}
+
 // Default suggested out-of-order reasons (editable by Superadmin in Admin Panel later)
 const DEFAULT_OOO_REASONS = [
   "Clogged / won't flush",
@@ -106,6 +127,12 @@ function attemptLogin(pin) {
       }
 
       currentUser = { uid, ...userData };
+      // Normalize: old records have a single "role" string, new records have a
+      // "roles" object ({user: true, preevent: true}). Support both so nothing
+      // that was set up before this change breaks.
+      if (!currentUser.roles) {
+        currentUser.roles = currentUser.role ? { [currentUser.role]: true } : {};
+      }
       showAppShell();
     })
     .catch((err) => {
@@ -176,20 +203,21 @@ function showAppShell() {
   document.getElementById("user-name-display").textContent =
     `${currentUser.firstName} ${currentUser.lastName}`;
 
-  const roleInfo = ROLES[currentUser.role] || { label: currentUser.role };
+  const roleKeys = getUserRoleKeys(currentUser);
   const badge = document.getElementById("role-badge-display");
-  badge.textContent = roleInfo.label;
-  badge.className = `role-badge ${currentUser.role}`;
+  badge.innerHTML = roleKeys.map(k =>
+    `<span class="role-badge ${k}" style="margin-right:4px;">${ROLES[k] ? ROLES[k].label : k}</span>`
+  ).join("");
 
   setupSiteSelector();
-  renderTabsForRole(currentUser.role);
+  renderTabsForRoles(roleKeys);
 }
 
 function setupSiteSelector() {
   const selector = document.getElementById("site-selector");
   selector.innerHTML = "";
 
-  if (currentUser.role === "superadmin") {
+  if (hasRole(currentUser, "superadmin")) {
     const allOpt = document.createElement("option");
     allOpt.value = "all";
     allOpt.textContent = "All Sites";
@@ -215,44 +243,59 @@ function setupSiteSelector() {
   });
 }
 
-function renderTabsForRole(role) {
+// Each role contributes a list of tabs. IDs are unique per distinct view so
+// that someone holding multiple roles (e.g. Maintenance + User) gets both
+// views as separate tabs rather than one clobbering the other.
+const ROLE_TABS = {
+  superadmin: [
+    { id: "pre-event-admin", label: "Pre-Event Setup" },
+    { id: "during-event", label: "During Event" },
+    { id: "closing-history", label: "Closing (History)" },
+    { id: "oor-manage", label: "Out of Order (Manage)" },
+    { id: "admin", label: "Admin Panel" }
+  ],
+  superuser: [
+    { id: "pre-event-admin", label: "Pre-Event Setup" },
+    { id: "during-event", label: "During Event" },
+    { id: "closing-history", label: "Closing (History)" },
+    { id: "oor-manage", label: "Out of Order (Manage)" },
+    { id: "admin", label: "Admin Panel" }
+  ],
+  user: [
+    { id: "during-event", label: "During Event" },
+    { id: "closing-entry", label: "Closing Count" },
+    { id: "oor-flag", label: "Flag a Unit" },
+    { id: "request-supplies", label: "Request Supplies" }
+  ],
+  maintenance: [
+    { id: "oor-queue", label: "Flagged Units" },
+    { id: "supplies", label: "Log Supplies" }
+  ],
+  preevent: [
+    { id: "pre-event-entry", label: "Pre-Event Count" }
+  ],
+  executive: [
+    { id: "reports", label: "Reports" }
+  ],
+  inventory: [
+    { id: "orders", label: "Orders" }
+  ]
+};
+
+function renderTabsForRoles(roleKeys) {
   const tabsEl = document.getElementById("main-tabs");
   tabsEl.innerHTML = "";
 
-  let tabs = [];
-  if (role === "superadmin" || role === "superuser") {
-    tabs = [
-      { id: "pre-event", label: "Pre-Event" },
-      { id: "during-event", label: "During Event" },
-      { id: "closing", label: "Closing" },
-      { id: "out-of-order", label: "Out of Order" },
-      { id: "admin", label: "Admin Panel" }
-    ];
-  } else if (role === "user") {
-    tabs = [
-      { id: "during-event", label: "During Event" },
-      { id: "closing", label: "Closing" },
-      { id: "out-of-order", label: "Flag a Unit" },
-      { id: "request-supplies", label: "Request Supplies" }
-    ];
-  } else if (role === "maintenance") {
-    tabs = [
-      { id: "out-of-order", label: "Flagged Units" },
-      { id: "supplies", label: "Log Supplies" }
-    ];
-  } else if (role === "preevent") {
-    tabs = [
-      { id: "pre-event", label: "Pre-Event" }
-    ];
-  } else if (role === "executive") {
-    tabs = [
-      { id: "reports", label: "Reports" }
-    ];
-  } else if (role === "inventory") {
-    tabs = [
-      { id: "orders", label: "Orders" }
-    ];
-  }
+  const seen = new Set();
+  const tabs = [];
+  roleKeys.forEach((role) => {
+    (ROLE_TABS[role] || []).forEach((tab) => {
+      if (!seen.has(tab.id)) {
+        seen.add(tab.id);
+        tabs.push(tab);
+      }
+    });
+  });
 
   tabs.forEach((tab, i) => {
     const btn = document.createElement("button");
@@ -278,32 +321,34 @@ function renderTabContent(tabId) {
     return;
   }
 
-  if (tabId === "out-of-order") {
-    if (currentUser.role === "user") renderFlagUnitForm(content);
-    else if (currentUser.role === "maintenance") renderMaintenanceQueue(content);
-    else renderOutOfOrderManagement(content); // superadmin / superuser
+  if (tabId === "oor-flag") {
+    renderFlagUnitForm(content);
+    return;
+  }
+  if (tabId === "oor-queue") {
+    renderMaintenanceQueue(content);
+    return;
+  }
+  if (tabId === "oor-manage") {
+    renderOutOfOrderManagement(content);
     return;
   }
 
-  if (tabId === "pre-event") {
-    if (currentUser.role === "superadmin" || currentUser.role === "superuser") {
-      renderPreEventAdminPanel(content);
-    } else if (currentUser.role === "preevent") {
-      renderInventoryCountEntry(content, "beginning", "Beginning Inventory Count");
-    } else {
-      content.innerHTML = `<div class="panel-placeholder"><h3 style="margin-bottom:8px;color:var(--navy)">Pre-Event Task List</h3><p>Checklist tasks coming in a future build pass.</p></div>`;
-    }
+  if (tabId === "pre-event-admin") {
+    renderPreEventAdminPanel(content);
+    return;
+  }
+  if (tabId === "pre-event-entry") {
+    renderInventoryCountEntry(content, "beginning", "Beginning Inventory Count");
     return;
   }
 
-  if (tabId === "closing") {
-    if (currentUser.role === "user") {
-      renderInventoryCountEntry(content, "ending", "Ending Inventory Count");
-    } else if (currentUser.role === "superadmin" || currentUser.role === "superuser") {
-      renderInventoryCountHistory(content);
-    } else {
-      content.innerHTML = `<div class="panel-placeholder"><h3 style="margin-bottom:8px;color:var(--navy)">Closing Task List</h3><p>Checklist tasks coming in a future build pass.</p></div>`;
-    }
+  if (tabId === "closing-entry") {
+    renderInventoryCountEntry(content, "ending", "Ending Inventory Count");
+    return;
+  }
+  if (tabId === "closing-history") {
+    renderInventoryCountHistory(content);
     return;
   }
 
@@ -328,7 +373,7 @@ function renderTabContent(tabId) {
   };
   content.innerHTML = `
     <div class="panel-placeholder">
-      <h3 style="margin-bottom:8px;color:var(--navy)">${labels[tabId]}</h3>
+      <h3 style="margin-bottom:8px;color:var(--navy)">${labels[tabId] || tabId}</h3>
       <p>This section is scaffolded and ready for data binding — coming in the next build pass.</p>
     </div>
   `;
@@ -446,9 +491,9 @@ function renderFlagUnitForm(content) {
 function renderOutOfOrderManagement(content) {
   const topSelector = document.getElementById("site-selector");
   const selectedSite = topSelector.value;
-  const sitesToShow = (currentUser.role === "superadmin" && selectedSite === "all")
+  const sitesToShow = (hasRole(currentUser, "superadmin") && selectedSite === "all")
     ? Object.keys(SITES)
-    : [currentUser.role === "superadmin" ? selectedSite : currentUser.site];
+    : [hasRole(currentUser, "superadmin") ? selectedSite : currentUser.site];
 
   content.innerHTML = `<div class="card"><p style="color:var(--muted);">Loading reports...</p></div>`;
 
@@ -466,7 +511,7 @@ function renderOutOfOrderManagement(content) {
       const maintenanceBySite = {};
       usersSnap.forEach((child) => {
         const u = child.val();
-        if (u.role === "maintenance" && u.active !== false && u.isMOD) {
+        if (hasRole(u, "maintenance") && u.active !== false && u.isMOD) {
           if (!maintenanceBySite[u.site]) maintenanceBySite[u.site] = [];
           maintenanceBySite[u.site].push({ uid: child.key, name: `${u.firstName} ${u.lastName}` });
         }
@@ -620,9 +665,9 @@ function renderPreEventAdminPanel(content) {
 
 function renderUnitOpenCloseToggles(container) {
   const topSelector = document.getElementById("site-selector");
-  const site = currentUser.role === "superadmin" ? topSelector.value : currentUser.site;
+  const site = hasRole(currentUser, "superadmin") ? topSelector.value : currentUser.site;
 
-  if (currentUser.role === "superadmin" && site === "all") {
+  if (hasRole(currentUser, "superadmin") && site === "all") {
     container.innerHTML = `<div class="card"><p style="color:var(--muted);">Pick a specific site above to manage unit open/closed status.</p></div>`;
     return;
   }
@@ -631,7 +676,7 @@ function renderUnitOpenCloseToggles(container) {
 
   // Superadmin can always toggle. Super User can only toggle while flagged MOD (on duty) —
   // check their live status rather than the cached login-time value, since it can change mid-shift.
-  const permissionCheck = currentUser.role === "superadmin"
+  const permissionCheck = hasRole(currentUser, "superadmin")
     ? Promise.resolve(true)
     : db.ref(`users/${currentUser.uid}/isMOD`).once("value").then(snap => snap.val() === true);
 
@@ -650,7 +695,7 @@ function renderUnitOpenCloseToggles(container) {
     if (usersSnap.exists()) {
       usersSnap.forEach((child) => {
         const u = child.val();
-        if (u.role === "user" && u.site === site && u.active !== false) {
+        if (hasRole(u, "user") && u.site === site && u.active !== false) {
           attendants.push({ uid: child.key, name: `${u.firstName} ${u.lastName}` });
         }
       });
@@ -717,9 +762,9 @@ function renderUnitOpenCloseToggles(container) {
 
 function renderInventoryItemsAdmin(content) {
   const topSelector = document.getElementById("site-selector");
-  const site = currentUser.role === "superadmin" ? topSelector.value : currentUser.site;
+  const site = hasRole(currentUser, "superadmin") ? topSelector.value : currentUser.site;
 
-  if (currentUser.role === "superadmin" && site === "all") {
+  if (hasRole(currentUser, "superadmin") && site === "all") {
     content.innerHTML = `<div class="panel-placeholder">Pick a specific site above to manage its inventory items — items are set up per site.</div>`;
     return;
   }
@@ -851,7 +896,7 @@ function renderInventoryCountEntry(content, type, title) {
 
   // User-role attendants only see groups containing a unit assigned to them.
   // Maintenance and other roles that reach this screen see everything at their site.
-  const scopePromise = currentUser.role === "user"
+  const scopePromise = hasRole(currentUser, "user")
     ? getAssignedGroupKeys(site, currentUser.uid)
     : Promise.resolve(null);
 
@@ -959,7 +1004,7 @@ function renderGroupCountForm(site, groupKey, groupName, type) {
             type,
             countedByUid: currentUser.uid,
             countedByName: `${currentUser.firstName} ${currentUser.lastName}`,
-            countedByRole: currentUser.role,
+            countedByRole: getUserRoleKeys(currentUser).join(","),
             timestamp: firebase.database.ServerValue.TIMESTAMP,
             counts: countsBySex[sex]
           }));
@@ -980,9 +1025,9 @@ function renderGroupCountForm(site, groupKey, groupName, type) {
 // ===================== CLOSING: INVENTORY COUNT HISTORY (Superadmin/Super User) =====================
 function renderInventoryCountHistory(content) {
   const topSelector = document.getElementById("site-selector");
-  const site = currentUser.role === "superadmin" ? topSelector.value : currentUser.site;
+  const site = hasRole(currentUser, "superadmin") ? topSelector.value : currentUser.site;
 
-  if (currentUser.role === "superadmin" && site === "all") {
+  if (hasRole(currentUser, "superadmin") && site === "all") {
     content.innerHTML = `<div class="panel-placeholder">Pick a specific site above to view its inventory count history.</div>`;
     return;
   }
@@ -1335,7 +1380,7 @@ function renderInventoryOrders(content) {
             type: "addition",
             countedByUid: currentUser.uid,
             countedByName: `${currentUser.firstName} ${currentUser.lastName}`,
-            countedByRole: currentUser.role,
+            countedByRole: getUserRoleKeys(currentUser).join(","),
             timestamp: firebase.database.ServerValue.TIMESTAMP,
             counts: { [req.itemKey]: { name: req.itemName, count: qty } },
             note: `Fulfilled mid-event request from ${req.requestedByName}`
@@ -1365,7 +1410,7 @@ function renderInventoryOrders(content) {
 
 // ===================== ADMIN PANEL: UNITS CSV IMPORT =====================
 function renderAdminPanel(content) {
-  const isSuperadmin = currentUser.role === "superadmin";
+  const isSuperadmin = hasRole(currentUser, "superadmin");
   const siteOptions = isSuperadmin
     ? Object.entries(SITES).map(([key, label]) => `<option value="${key}">${label}</option>`).join("")
     : `<option value="${currentUser.site}">${SITES[currentUser.site]}</option>`;
@@ -1434,12 +1479,17 @@ function renderAdminPanel(content) {
           <input type="tel" id="add-staff-phone" placeholder="717-555-0100" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px;">
         </div>
         <div>
-          <label style="display:block; font-size:0.8rem; color:var(--muted); margin-bottom:4px;">Role</label>
-          <select id="add-staff-role" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px;">
-            ${isSuperadmin
-              ? `<option value="superadmin">Superadmin</option><option value="superuser">Super User</option><option value="user" selected>User</option><option value="maintenance">Maintenance</option><option value="preevent">Pre-Event</option><option value="executive">Executive</option><option value="inventory">Inventory</option>`
-              : `<option value="user" selected>User</option><option value="maintenance">Maintenance</option><option value="preevent">Pre-Event</option><option value="inventory">Inventory</option><option value="superuser">Super User</option>`}
-          </select>
+          <label style="display:block; font-size:0.8rem; color:var(--muted); margin-bottom:4px;">Roles (select one or more)</label>
+          <div id="add-staff-role-checkboxes" style="padding:8px; border:1px solid var(--border); border-radius:6px;">
+            ${(isSuperadmin
+              ? ["superadmin", "superuser", "user", "maintenance", "preevent", "executive", "inventory"]
+              : ["user", "maintenance", "preevent", "inventory", "superuser"]
+            ).map((r, i) => `
+              <label style="display:inline-block; margin:2px 10px 2px 0; font-size:0.85rem; cursor:pointer;">
+                <input type="checkbox" class="add-staff-role-checkbox" value="${r}" ${r === "user" ? "checked" : ""}> ${ROLES[r].label}
+              </label>
+            `).join("")}
+          </div>
         </div>
         <div>
           <label style="display:block; font-size:0.8rem; color:var(--muted); margin-bottom:4px;">Site</label>
@@ -1482,7 +1532,7 @@ function renderAdminPanel(content) {
       <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">
         CSV columns required: <code>first_name, last_name, email, phone, role, site, pin</code>.
         Phone is optional at import — but anyone without a phone on file can't use "Forgot PIN?" text reset until one is added (editable below in the staff list).
-        Role must be superadmin / superuser / user / maintenance / preevent / executive / inventory. Site can be blank for superadmin or executive (defaults to "all").
+        Role must be superadmin / superuser / user / maintenance / preevent / executive / inventory — a person can hold more than one, separated by commas (e.g. "user,preevent"). Site can be blank if every role is superadmin/executive (defaults to "all").
         Leave <code>pin</code> blank to auto-generate a unique 4-digit PIN. This <strong>adds</strong> new staff — it does not remove existing users.
       </p>
       <button id="staff-template-btn" style="padding:8px 14px; background:none; border:1px solid var(--navy); color:var(--navy); border-radius:6px; cursor:pointer; margin-bottom:14px;">
@@ -1512,17 +1562,21 @@ function renderAdminPanel(content) {
   }
 
   // ---------- Add Staff Member (single-record quick add) ----------
-  const addRoleSelect = document.getElementById("add-staff-role");
   const addSiteSelect = document.getElementById("add-staff-site");
+  const addRoleCheckboxes = () => Array.from(document.querySelectorAll(".add-staff-role-checkbox"));
 
   if (isSuperadmin) {
-    addRoleSelect.addEventListener("change", () => {
-      if (addRoleSelect.value === "superadmin" || addRoleSelect.value === "executive") {
-        addSiteSelect.value = "all";
-        addSiteSelect.disabled = true;
-      } else {
-        addSiteSelect.disabled = false;
-      }
+    addRoleCheckboxes().forEach((cb) => {
+      cb.addEventListener("change", () => {
+        const checked = addRoleCheckboxes().filter(c => c.checked).map(c => c.value);
+        const allOrgWide = checked.length && checked.every(r => r === "superadmin" || r === "executive");
+        if (allOrgWide) {
+          addSiteSelect.value = "all";
+          addSiteSelect.disabled = true;
+        } else {
+          addSiteSelect.disabled = false;
+        }
+      });
     });
   }
 
@@ -1532,14 +1586,23 @@ function renderAdminPanel(content) {
     const lastName = document.getElementById("add-staff-last").value.trim();
     const email = document.getElementById("add-staff-email").value.trim();
     const phone = document.getElementById("add-staff-phone").value.trim();
-    const role = addRoleSelect.value;
-    const site = (role === "superadmin" || role === "executive") ? "all" : addSiteSelect.value;
+    const checkedRoles = addRoleCheckboxes().filter(c => c.checked).map(c => c.value);
 
     if (!firstName || !lastName) {
       statusEl.style.color = "var(--danger)";
       statusEl.textContent = "First and last name are required.";
       return;
     }
+    if (!checkedRoles.length) {
+      statusEl.style.color = "var(--danger)";
+      statusEl.textContent = "Select at least one role.";
+      return;
+    }
+
+    const roles = {};
+    checkedRoles.forEach(r => { roles[r] = true; });
+    const allOrgWide = checkedRoles.every(r => r === "superadmin" || r === "executive");
+    const site = allOrgWide ? "all" : addSiteSelect.value;
 
     statusEl.style.color = "var(--muted)";
     statusEl.textContent = "Adding...";
@@ -1555,10 +1618,10 @@ function renderAdminPanel(content) {
       } while (usedPins.has(newPin) && attempts < 100);
 
       const newUserRef = db.ref("users").push();
-      newUserRef.set({ firstName, lastName, email, phone, role, site, pin: newPin, active: true })
+      newUserRef.set({ firstName, lastName, email, phone, roles, site, pin: newPin, active: true })
         .then(() => {
           statusEl.style.color = "var(--success)";
-          statusEl.textContent = `Added ${firstName} ${lastName} — PIN ${newPin} (${ROLES[role].label}${site !== "all" ? ", " + SITES[site] : ""})`;
+          statusEl.textContent = `Added ${firstName} ${lastName} — PIN ${newPin} (${checkedRoles.map(r => ROLES[r].label).join(", ")}${site !== "all" ? ", " + SITES[site] : ""})`;
           document.getElementById("add-staff-first").value = "";
           document.getElementById("add-staff-last").value = "";
           document.getElementById("add-staff-email").value = "";
@@ -1757,13 +1820,17 @@ function renderAdminPanel(content) {
             const lastName = (row.last_name || "").trim();
             const email = (row.email || "").trim();
             const phone = (row.phone || "").trim();
-            const role = (row.role || "").trim().toLowerCase();
+            const roleField = (row.role || "").trim().toLowerCase();
+            const roleList = roleField.split(",").map(r => r.trim()).filter(Boolean);
             let site = (row.site || "").trim().toLowerCase();
             let pin = (row.pin || "").trim();
 
             if (!firstName || !lastName) { errors.push(`Row ${i + 2}: missing first/last name`); return; }
-            if (!VALID_ROLES.includes(role)) { errors.push(`Row ${i + 2}: role "${role}" must be superadmin, superuser, user, maintenance, preevent, executive, or inventory`); return; }
-            if (role === "superadmin" || role === "executive") {
+            if (!roleList.length) { errors.push(`Row ${i + 2}: role is required`); return; }
+            const badRoles = roleList.filter(r => !VALID_ROLES.includes(r));
+            if (badRoles.length) { errors.push(`Row ${i + 2}: role "${badRoles.join(", ")}" must be superadmin, superuser, user, maintenance, preevent, executive, or inventory`); return; }
+            const allOrgWide = roleList.every(r => r === "superadmin" || r === "executive");
+            if (allOrgWide) {
               site = "all";
             } else if (!Object.keys(SITES).includes(site)) {
               errors.push(`Row ${i + 2}: site "${site}" must be parf, srf, krf, or garf`);
@@ -1777,8 +1844,10 @@ function renderAdminPanel(content) {
               pin = generateUniquePin();
             }
 
+            const roles = {};
+            roleList.forEach(r => { roles[r] = true; });
             const uidKey = `staff_${Date.now()}_${i}`;
-            newUsers[uidKey] = { firstName, lastName, email, phone, role, site, pin, active: true };
+            newUsers[uidKey] = { firstName, lastName, email, phone, roles, site, pin, active: true };
           });
 
           if (errors.length) {
@@ -1795,7 +1864,7 @@ function renderAdminPanel(content) {
           db.ref().update(updates)
             .then(() => {
               const summary = Object.entries(newUsers)
-                .map(([, u]) => `${u.firstName} ${u.lastName} — PIN ${u.pin} (${u.role}${u.site !== "all" ? ", " + SITES[u.site] : ""})`)
+                .map(([, u]) => `${u.firstName} ${u.lastName} — PIN ${u.pin} (${formatRoleLabels(u)}${u.site !== "all" ? ", " + SITES[u.site] : ""})`)
                 .join("<br>");
               statusEl.style.color = "var(--success)";
               statusEl.innerHTML = `Imported ${Object.keys(newUsers).length} staff member(s):<br>${summary}`;
@@ -2039,7 +2108,7 @@ function loadStaffTable(site) {
     const relevantUsers = [];
     snap.forEach((child) => {
       const u = child.val();
-      if (u.site === site || ((u.role === "superadmin" || u.role === "executive") && currentUser.role === "superadmin")) {
+      if (u.site === site || ((hasRole(u, "superadmin") || hasRole(u, "executive")) && hasRole(currentUser, "superadmin"))) {
         relevantUsers.push({ uid: child.key, ...u });
       }
     });
@@ -2049,10 +2118,10 @@ function loadStaffTable(site) {
       return;
     }
 
-    const isSuperadminViewer = currentUser.role === "superadmin";
+    const isSuperadminViewer = hasRole(currentUser, "superadmin");
 
     const rows = relevantUsers.map(u => {
-      const modCell = (u.role === "superuser" || u.role === "maintenance")
+      const modCell = (hasRole(u, "superuser") || hasRole(u, "maintenance"))
         ? `<input type="checkbox" class="mod-toggle" data-uid="${u.uid}" ${u.isMOD ? "checked" : ""} style="width:18px; height:18px; cursor:pointer;">`
         : `<span style="color:var(--border);">—</span>`;
       const pinCell = isSuperadminViewer
@@ -2064,15 +2133,24 @@ function loadStaffTable(site) {
           style="width:130px; padding:4px; border:1px solid var(--border); border-radius:4px;">
         <button class="phone-save-btn" data-uid="${u.uid}" style="padding:4px 8px; font-size:0.75rem; background:var(--navy); color:white; border:none; border-radius:4px; cursor:pointer; margin-left:4px;">Save</button>
       `;
-      const canEditThisRole = isSuperadminViewer || (currentUser.role === "superuser" && ["user", "maintenance", "preevent", "inventory", "superuser"].includes(u.role));
+      const userRoleKeys = getUserRoleKeys(u);
+      const canEditThisRole = isSuperadminViewer || (hasRole(currentUser, "superuser") && userRoleKeys.every(r => ["user", "maintenance", "preevent", "inventory", "superuser"].includes(r)));
       const editableRoleOptions = isSuperadminViewer
         ? Object.keys(ROLES)
         : ["user", "maintenance", "preevent", "inventory", "superuser"];
       const roleCell = canEditThisRole
-        ? `<select class="role-edit" data-uid="${u.uid}" style="padding:4px; border:1px solid var(--border); border-radius:4px;">
-            ${editableRoleOptions.map(r => `<option value="${r}" ${u.role === r ? "selected" : ""}>${ROLES[r].label}</option>`).join("")}
-          </select>`
-        : ROLES[u.role] ? ROLES[u.role].label : u.role;
+        ? `<details class="role-edit-details" data-uid="${u.uid}">
+            <summary style="cursor:pointer; padding:4px 8px; border:1px solid var(--border); border-radius:4px; display:inline-block; font-size:0.8rem;">${formatRoleLabels(u)} ▾</summary>
+            <div style="margin-top:6px; padding:8px; border:1px solid var(--border); border-radius:6px; background:#fafafa;">
+              ${editableRoleOptions.map(r => `
+                <label style="display:block; font-size:0.8rem; margin-bottom:4px; cursor:pointer;">
+                  <input type="checkbox" class="role-checkbox" value="${r}" ${userRoleKeys.includes(r) ? "checked" : ""}> ${ROLES[r].label}
+                </label>
+              `).join("")}
+              <button class="role-save-btn" data-uid="${u.uid}" style="margin-top:6px; padding:4px 10px; font-size:0.75rem; background:var(--navy); color:white; border:none; border-radius:4px; cursor:pointer;">Save Roles</button>
+            </div>
+          </details>`
+        : formatRoleLabels(u);
       return `<tr>
         <td style="padding:8px; border-bottom:1px solid var(--border);">${u.firstName} ${u.lastName}</td>
         <td style="padding:8px; border-bottom:1px solid var(--border);">${roleCell}</td>
@@ -2103,23 +2181,35 @@ function loadStaffTable(site) {
       </table>
     `;
 
-    container.querySelectorAll(".role-edit").forEach((select) => {
-      select.addEventListener("change", () => {
-        const uid = select.dataset.uid;
-        const newRole = select.value;
-        const updates = { role: newRole };
-        // Org-wide roles (superadmin/executive) get site "all"; switching away from
-        // one of those to a site-scoped role needs a real site — default to the
-        // currently-viewed site since that's the context this edit happened in.
-        if (newRole === "superadmin" || newRole === "executive") {
+    container.querySelectorAll(".role-save-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const uid = btn.dataset.uid;
+        const details = container.querySelector(`.role-edit-details[data-uid="${uid}"]`);
+        const checked = Array.from(details.querySelectorAll(".role-checkbox:checked")).map(cb => cb.value);
+
+        if (!checked.length) {
+          alert("Select at least one role.");
+          return;
+        }
+
+        const newRoles = {};
+        checked.forEach(r => { newRoles[r] = true; });
+
+        const updates = { roles: newRoles, role: null }; // clear legacy single-role field
+        // If every selected role is org-wide (superadmin/executive), lock site to "all".
+        // Otherwise, a site-scoped role needs a real site — keep existing if already
+        // set to a real site, or default to the currently-viewed site.
+        const allOrgWide = checked.every(r => r === "superadmin" || r === "executive");
+        if (allOrgWide) {
           updates.site = "all";
         } else {
           const user = relevantUsers.find(u => u.uid === uid);
-          if (user.site === "all") updates.site = site;
+          if (!user.site || user.site === "all") updates.site = site;
         }
+
         db.ref(`users/${uid}`).update(updates)
           .then(() => loadStaffTable(site))
-          .catch((err) => alert("Failed to update role: " + err.message));
+          .catch((err) => alert("Failed to update roles: " + err.message));
       });
     });
 
