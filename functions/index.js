@@ -1,4 +1,5 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const { onValueCreated, onValueUpdated } = require("firebase-functions/v2/database");
 const { defineSecret } = require("firebase-functions/params");
 const admin = require("firebase-admin");
 const twilio = require("twilio");
@@ -119,6 +120,114 @@ function toE164(rawPhone) {
 }
 
 /**
+ * Sends a text via Twilio, or logs it instead if Sandbox Mode is on —
+ * shared by every function that needs to text someone, so sandbox
+ * behavior stays consistent everywhere.
+ */
+async function sendSmsOrLog(rawPhone, body, type) {
+  const toNumber = toE164(rawPhone);
+
+  const settingsSnap = await db.ref("settings/sandboxMode").once("value");
+  const sandboxMode = settingsSnap.val() === true;
+
+  if (sandboxMode) {
+    await db.ref("smsLog").push({
+      to: toNumber, body, type, sentReal: false,
+      timestamp: admin.database.ServerValue.TIMESTAMP
+    });
+    return;
+  }
+
+  const client = twilio(TWILIO_ACCOUNT_SID.value(), TWILIO_AUTH_TOKEN.value());
+  await client.messages.create({ body, from: TWILIO_FROM_NUMBER, to: toNumber });
+
+  await db.ref("smsLog").push({
+    to: toNumber, body, type, sentReal: true,
+    timestamp: admin.database.ServerValue.TIMESTAMP
+  });
+}
+
+/**
+ * Finds phone numbers for everyone at a site holding a given role AND
+ * currently flagged MOD (on duty). Works with both the new "roles" object
+ * and legacy single "role" string records.
+ */
+async function getModPhoneNumbers(site, roleKey) {
+  const usersSnap = await db.ref("users").once("value");
+  const numbers = [];
+  usersSnap.forEach((child) => {
+    const u = child.val();
+    const hasThisRole = (u.roles && u.roles[roleKey]) || u.role === roleKey;
+    if (hasThisRole && u.site === site && u.isMOD === true && u.active !== false && u.phone) {
+      numbers.push(u.phone);
+    }
+  });
+  return numbers;
+}
+
+/**
+ * sendSupplyRequestAlert
+ * Fires when a User submits a mid-event supply request. Texts every
+ * on-duty (MOD) Super User and Maintenance tech at that site.
+ */
+exports.sendSupplyRequestAlert = onValueCreated(
+  {
+    ref: "sites/{site}/supplyRequests/{requestId}",
+    instance: "privy-check",
+    secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN]
+  },
+  async (event) => {
+    const site = event.params.site;
+    const req = event.data.val();
+    if (!req) return;
+
+    try {
+      const [superuserPhones, maintenancePhones] = await Promise.all([
+        getModPhoneNumbers(site, "superuser"),
+        getModPhoneNumbers(site, "maintenance")
+      ]);
+      const phones = [...new Set([...superuserPhones, ...maintenancePhones])];
+      if (!phones.length) return;
+
+      const body = `Privy Check: ${req.itemName} needed at ${req.groupName} (${req.sex}). Requested by ${req.requestedByName}.`;
+      await Promise.all(phones.map(phone => sendSmsOrLog(phone, body, "supplyRequestCreated")));
+    } catch (err) {
+      console.error("sendSupplyRequestAlert error:", err);
+    }
+  }
+);
+
+/**
+ * sendSupplyFulfilledAlert
+ * Fires when a supply request's status changes to "fulfilled". Texts
+ * on-duty (MOD) Super Users at that site with what was delivered.
+ */
+exports.sendSupplyFulfilledAlert = onValueUpdated(
+  {
+    ref: "sites/{site}/supplyRequests/{requestId}",
+    instance: "privy-check",
+    secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN]
+  },
+  async (event) => {
+    const site = event.params.site;
+    const before = event.data.before.val();
+    const after = event.data.after.val();
+    if (!after || !before) return;
+    if (before.status === "fulfilled" || after.status !== "fulfilled") return;
+
+    try {
+      const superuserPhones = await getModPhoneNumbers(site, "superuser");
+      if (!superuserPhones.length) return;
+
+      const body = `Privy Check: ${after.itemName} at ${after.groupName} (${after.sex}) fulfilled by ${after.fulfilledByName} — ${after.fulfilledQty ?? "?"} cases delivered.`;
+      await Promise.all(superuserPhones.map(phone => sendSmsOrLog(phone, body, "supplyRequestFulfilled")));
+    } catch (err) {
+      console.error("sendSupplyFulfilledAlert error:", err);
+    }
+  }
+);
+
+/**
  * Generates a random 4-digit PIN not already in use by any user.
  */
 async function generateUniquePin() {
@@ -138,3 +247,4 @@ async function generateUniquePin() {
 
   return candidate;
 }
+
