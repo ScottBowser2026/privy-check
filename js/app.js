@@ -1065,7 +1065,7 @@ function renderOutOfOrderManagement(content) {
         const u = child.val();
         if (hasRole(u, "maintenance") && u.active !== false && u.isMOD) {
           if (!maintenanceBySite[u.site]) maintenanceBySite[u.site] = [];
-          maintenanceBySite[u.site].push({ uid: child.key, name: `${u.firstName} ${u.lastName}` });
+          maintenanceBySite[u.site].push({ uid: child.key, name: `${u.firstName} ${u.lastName}`, phone: u.phone });
         }
       });
 
@@ -1107,6 +1107,11 @@ function renderOutOfOrderManagement(content) {
                 <select class="assign-select" data-site="${f.site}" data-flag-id="${f.flagId}" style="padding:6px; border-radius:6px; border:1px solid var(--border);" ${f.status === "closed" ? "disabled" : ""}>
                   ${techOptions}
                 </select>
+                ${techs.filter(t => t.phone).length ? `
+                  <div style="margin-top:6px;">
+                    ${techs.filter(t => t.phone).map(t => `<a href="tel:${t.phone}" style="font-size:0.75rem; color:var(--navy); text-decoration:none; display:block;">📞 Call ${t.name}</a>`).join("")}
+                  </div>
+                ` : ""}
               </div>
             </div>
           </div>

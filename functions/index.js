@@ -166,6 +166,24 @@ async function getModPhoneNumbers(site, roleKey) {
 }
 
 /**
+ * Same as getModPhoneNumbers, but returns {name, phone} pairs instead of
+ * just phone numbers — used where the name is needed too (e.g. telling a
+ * Super User which tech an alert went to).
+ */
+async function getModContacts(site, roleKey) {
+  const usersSnap = await db.ref("users").once("value");
+  const contacts = [];
+  usersSnap.forEach((child) => {
+    const u = child.val();
+    const hasThisRole = (u.roles && u.roles[roleKey]) || u.role === roleKey;
+    if (hasThisRole && u.site === site && u.isMOD === true && u.active !== false && u.phone) {
+      contacts.push({ name: `${u.firstName} ${u.lastName}`, phone: u.phone });
+    }
+  });
+  return contacts;
+}
+
+/**
  * sendSupplyRequestAlert
  * Fires when a User submits a mid-event supply request. Texts every
  * on-duty (MOD) Super User and Maintenance tech at that site.
@@ -198,10 +216,44 @@ exports.sendSupplyRequestAlert = onValueCreated(
 );
 
 /**
- * sendSupplyFulfilledAlert
- * Fires when a supply request's status changes to "fulfilled". Texts
- * on-duty (MOD) Super Users at that site with what was delivered.
+ * sendOutOfOrderFlagAlert
+ * Fires the moment a User flags a unit out of order. Texts on-duty (MOD)
+ * Maintenance so they know to respond, and separately confirms to on-duty
+ * (MOD) Super Users that the alert actually went out (with the maintenance
+ * tech's name+phone so they can call to confirm receipt if needed).
  */
+exports.sendOutOfOrderFlagAlert = onValueCreated(
+  {
+    ref: "sites/{site}/outOfOrder/{flagId}",
+    instance: "privy-check",
+    secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN]
+  },
+  async (event) => {
+    const site = event.params.site;
+    const flag = event.data.val();
+    if (!flag) return;
+
+    try {
+      const maintenanceContacts = await getModContacts(site, "maintenance");
+      const superuserPhones = await getModPhoneNumbers(site, "superuser");
+
+      const maintenanceBody = `Privy Check ALERT: ${flag.unitName} flagged out of order — ${flag.reason}${flag.notes ? " (" + flag.notes + ")" : ""}. Flagged by ${flag.flaggedByName}.`;
+      await Promise.all(maintenanceContacts.map(c => sendSmsOrLog(c.phone, maintenanceBody, "outOfOrderFlagCreated")));
+
+      if (superuserPhones.length) {
+        const namesList = maintenanceContacts.length
+          ? maintenanceContacts.map(c => c.name).join(", ")
+          : "no on-duty Maintenance tech";
+        const superuserBody = `Privy Check: ${flag.unitName} flagged (${flag.reason}) — alert sent to Maintenance MOD (${namesList}).`;
+        await Promise.all(superuserPhones.map(phone => sendSmsOrLog(phone, superuserBody, "outOfOrderFlagNotified")));
+      }
+    } catch (err) {
+      console.error("sendOutOfOrderFlagAlert error:", err);
+    }
+  }
+);
+
+
 exports.sendSupplyFulfilledAlert = onValueUpdated(
   {
     ref: "sites/{site}/supplyRequests/{requestId}",
