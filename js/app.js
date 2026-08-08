@@ -280,8 +280,7 @@ const ROLE_TABS = {
     { id: "request-supplies", label: "Request Supplies" }
   ],
   maintenance: [
-    { id: "oor-queue", label: "Flagged Units" },
-    { id: "supplies", label: "Log Supplies" }
+    { id: "maintenance-home", label: "Maintenance" }
   ],
   preevent: [
     { id: "pre-event-entry", label: "Pre-Event Count" }
@@ -337,8 +336,8 @@ function renderTabContent(tabId) {
     renderFlagUnitForm(content);
     return;
   }
-  if (tabId === "oor-queue") {
-    renderMaintenanceQueue(content);
+  if (tabId === "maintenance-home") {
+    renderMaintenanceHome(content);
     return;
   }
   if (tabId === "oor-manage") {
@@ -361,11 +360,6 @@ function renderTabContent(tabId) {
   }
   if (tabId === "closing-history") {
     renderClosingHistoryPanel(content);
-    return;
-  }
-
-  if (tabId === "supplies") {
-    renderInventoryCountEntry(content, "addition", "Log Supplies Brought");
     return;
   }
 
@@ -1146,6 +1140,13 @@ function renderOutOfOrderManagement(content) {
 }
 
 // ===================== OUT-OF-ORDER: MAINTENANCE QUEUE =====================
+// ===================== MAINTENANCE: COMBINED HOME PAGE (everything on one page) =====================
+function renderMaintenanceHome(content) {
+  content.innerHTML = `<div id="maintenance-queue-section"></div><div id="maintenance-supplies-section"></div>`;
+  renderMaintenanceQueue(document.getElementById("maintenance-queue-section"));
+  renderInventoryCountEntry(document.getElementById("maintenance-supplies-section"), "addition", "Log Supplies Brought");
+}
+
 function renderMaintenanceQueue(content) {
   const site = currentUser.site;
   content.innerHTML = `<div class="card"><p style="color:var(--muted);">Loading assigned units...</p></div>`;
