@@ -367,8 +367,18 @@ function renderTabContent(tabId) {
     return;
   }
 
+  if (tabId === "during-event") {
+    if (hasRole(currentUser, "user")) {
+      renderStatusReportEntry(content);
+    } else if (hasRole(currentUser, "superadmin") || hasRole(currentUser, "superuser")) {
+      renderStatusReportHistory(content);
+    } else {
+      content.innerHTML = `<div class="panel-placeholder"><h3 style="margin-bottom:8px;color:var(--navy)">During-Event Task List</h3><p>Checklist tasks coming in a future build pass.</p></div>`;
+    }
+    return;
+  }
+
   const labels = {
-    "during-event": "During-Event Task List",
     "reports": "Reports"
   };
   content.innerHTML = `
@@ -488,6 +498,197 @@ function renderFlagUnitForm(content) {
 }
 
 // ===================== OUT-OF-ORDER: SUPERADMIN / SUPERUSER MANAGEMENT =====================
+// ===================== DURING-EVENT: STATUS REPORT (User signs off on assigned units) =====================
+function renderStatusReportEntry(content) {
+  const site = currentUser.site;
+  content.innerHTML = `<div class="card"><p style="color:var(--muted);">Loading your assigned units...</p></div>`;
+
+  db.ref(`sites/${site}/units`).once("value").then((snap) => {
+    if (!snap.exists()) {
+      content.innerHTML = `<div class="panel-placeholder">No units imported for ${SITES[site]} yet.</div>`;
+      return;
+    }
+    const allUnits = snap.val();
+    const units = Object.fromEntries(Object.entries(allUnits).filter(([, u]) => u.assignedTo && u.assignedTo[currentUser.uid]));
+
+    if (!Object.keys(units).length) {
+      content.innerHTML = `<div class="panel-placeholder">No units are currently assigned to you. Ask your Super User to assign you a unit in the Pre-Event tab.</div>`;
+      return;
+    }
+
+    const reasonOptions = DEFAULT_OOO_REASONS.map(r => `<option value="${r}">${r}</option>`).join("");
+
+    const unitBlocks = Object.entries(units).map(([key, u]) => `
+      <div class="card" style="margin-bottom:10px;" data-unit-key="${key}">
+        <strong>${u.name}</strong> <span style="color:var(--muted); font-size:0.8rem;">${u.type}${u.location ? " — " + u.location : ""}</span>
+        <div style="margin-top:10px; display:flex; gap:16px; flex-wrap:wrap;">
+          <label style="cursor:pointer;"><input type="radio" name="status-${key}" class="status-radio" value="good" checked> Good</label>
+          <label style="cursor:pointer;"><input type="radio" name="status-${key}" class="status-radio" value="needsAttention"> Needs Attention</label>
+          <label style="cursor:pointer;"><input type="radio" name="status-${key}" class="status-radio" value="outOfOrder"> Out of Order</label>
+        </div>
+        <div class="status-detail" style="display:none; margin-top:10px;">
+          <label style="display:block; font-size:0.8rem; color:var(--muted); margin-bottom:4px;">Issue</label>
+          <select class="status-reason" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; margin-bottom:8px;">
+            ${reasonOptions}
+          </select>
+          <label style="display:block; font-size:0.8rem; color:var(--muted); margin-bottom:4px;">Notes</label>
+          <textarea class="status-notes" rows="2" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; font-family:inherit;"></textarea>
+        </div>
+      </div>
+    `).join("");
+
+    content.innerHTML = `
+      <div class="card">
+        <h3 style="color:var(--navy); margin-bottom:8px;">During-Event Status Report — ${SITES[site]}</h3>
+        <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">
+          Check your assigned units and report their condition. Marking a unit "Out of Order" automatically flags it for maintenance, same as the Flag a Unit tab.
+        </p>
+      </div>
+      ${unitBlocks}
+      <div class="card">
+        <label style="display:flex; align-items:center; gap:8px; cursor:pointer; margin-bottom:14px;">
+          <input type="checkbox" id="status-signoff-checkbox" style="width:18px; height:18px;">
+          <span>I have personally checked these units and the information above is accurate.</span>
+        </label>
+        <button id="status-submit-btn" style="padding:10px 20px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer; font-weight:600;">
+          Submit Status Report
+        </button>
+        <div id="status-submit-status" style="margin-top:12px; font-size:0.85rem;"></div>
+      </div>
+    `;
+
+    // Toggle the reason/notes block based on selected status
+    content.querySelectorAll(".card[data-unit-key]").forEach((card) => {
+      const detail = card.querySelector(".status-detail");
+      card.querySelectorAll(".status-radio").forEach((radio) => {
+        radio.addEventListener("change", () => {
+          detail.style.display = radio.value === "good" ? "none" : "block";
+        });
+      });
+    });
+
+    document.getElementById("status-submit-btn").addEventListener("click", () => {
+      const statusEl = document.getElementById("status-submit-status");
+
+      if (!document.getElementById("status-signoff-checkbox").checked) {
+        statusEl.style.color = "var(--danger)";
+        statusEl.textContent = "Check the sign-off box before submitting.";
+        return;
+      }
+
+      const unitReports = {};
+      const newFlags = [];
+      let hasError = false;
+
+      content.querySelectorAll(".card[data-unit-key]").forEach((card) => {
+        const key = card.dataset.unitKey;
+        const status = card.querySelector(".status-radio:checked").value;
+        const reason = card.querySelector(".status-reason")?.value || "";
+        const notes = card.querySelector(".status-notes")?.value.trim() || "";
+
+        if (status !== "good" && !reason) hasError = true;
+
+        unitReports[key] = { unitName: units[key].name, status, reason: status === "good" ? "" : reason, notes };
+
+        if (status === "outOfOrder") {
+          newFlags.push({ unitKey: key, unitName: units[key].name, reason, notes });
+        }
+      });
+
+      if (hasError) {
+        statusEl.style.color = "var(--danger)";
+        statusEl.textContent = "Pick an issue for any unit marked Needs Attention or Out of Order.";
+        return;
+      }
+
+      statusEl.style.color = "var(--muted)";
+      statusEl.textContent = "Submitting...";
+
+      const reportRef = db.ref(`sites/${site}/statusReports`).push();
+      const writes = [reportRef.set({
+        submittedByUid: currentUser.uid,
+        submittedByName: `${currentUser.firstName} ${currentUser.lastName}`,
+        timestamp: firebase.database.ServerValue.TIMESTAMP,
+        signedOff: true,
+        unitReports
+      })];
+
+      newFlags.forEach((f) => {
+        const flagRef = db.ref(`sites/${site}/outOfOrder`).push();
+        writes.push(flagRef.set({
+          unitKey: f.unitKey, unitName: f.unitName, reason: f.reason, notes: f.notes,
+          flaggedByUid: currentUser.uid,
+          flaggedByName: `${currentUser.firstName} ${currentUser.lastName}`,
+          flaggedAt: firebase.database.ServerValue.TIMESTAMP,
+          status: "open"
+        }));
+        writes.push(db.ref(`sites/${site}/units/${f.unitKey}/status`).set("outOfOrder"));
+      });
+
+      Promise.all(writes).then(() => {
+        statusEl.style.color = "var(--success)";
+        statusEl.textContent = newFlags.length
+          ? `Status report submitted. ${newFlags.length} unit(s) flagged out of order.`
+          : "Status report submitted.";
+      }).catch((err) => {
+        statusEl.style.color = "var(--danger)";
+        statusEl.textContent = "Failed to submit: " + err.message;
+      });
+    });
+  });
+}
+
+// ===================== DURING-EVENT: STATUS REPORT HISTORY (Superadmin/Super User) =====================
+function renderStatusReportHistory(content) {
+  const topSelector = document.getElementById("site-selector");
+  const site = hasRole(currentUser, "superadmin") ? topSelector.value : currentUser.site;
+
+  if (hasRole(currentUser, "superadmin") && site === "all") {
+    content.innerHTML = `<div class="panel-placeholder">Pick a specific site above to view status reports.</div>`;
+    return;
+  }
+
+  content.innerHTML = `<div class="card"><p style="color:var(--muted);">Loading status reports...</p></div>`;
+
+  db.ref(`sites/${site}/statusReports`).limitToLast(15).once("value").then((snap) => {
+    if (!snap.exists()) {
+      content.innerHTML = `<div class="panel-placeholder">No status reports submitted yet for ${SITES[site]}.</div>`;
+      return;
+    }
+
+    const reports = [];
+    snap.forEach((child) => reports.push(child.val()));
+    reports.reverse();
+
+    const STATUS_INFO = {
+      good: { label: "Good", color: "var(--success)" },
+      needsAttention: { label: "Needs Attention", color: "var(--warn)" },
+      outOfOrder: { label: "Out of Order", color: "var(--danger)" }
+    };
+
+    const cardsHtml = reports.map((r) => {
+      const when = r.timestamp ? new Date(r.timestamp).toLocaleString() : "—";
+      const unitRows = Object.values(r.unitReports || {}).map((u) => {
+        const info = STATUS_INFO[u.status] || { label: u.status, color: "var(--muted)" };
+        return `<div style="padding:4px 0; font-size:0.85rem;">
+          <strong>${u.unitName}</strong> — <span style="color:${info.color}; font-weight:600;">${info.label}</span>
+          ${u.reason ? ` — ${u.reason}${u.notes ? ": " + u.notes : ""}` : ""}
+        </div>`;
+      }).join("");
+
+      return `
+        <div class="card" style="margin-bottom:10px;">
+          <div style="font-weight:600; margin-bottom:4px;">${r.submittedByName}</div>
+          <div style="color:var(--muted); font-size:0.75rem; margin-bottom:10px;">${when}</div>
+          ${unitRows}
+        </div>
+      `;
+    }).join("");
+
+    content.innerHTML = `<h3 style="color:var(--navy); margin-bottom:14px;">Status Reports — ${SITES[site]}</h3>` + cardsHtml;
+  });
+}
+
 function renderOutOfOrderManagement(content) {
   const topSelector = document.getElementById("site-selector");
   const selectedSite = topSelector.value;
