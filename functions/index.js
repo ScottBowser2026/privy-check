@@ -253,6 +253,48 @@ exports.sendOutOfOrderFlagAlert = onValueCreated(
   }
 );
 
+/**
+ * sendMedicalAlertNotification
+ * Fires the instant a Medical Alert is triggered (hold-to-confirm in the
+ * app). Texts on-duty (MOD) Security and Super User immediately — this is
+ * the highest-priority alert in the system, so it deliberately does NOT
+ * respect Sandbox Mode; it always sends for real.
+ */
+exports.sendMedicalAlertNotification = onValueCreated(
+  {
+    ref: "sites/{site}/medicalAlerts/{alertId}",
+    instance: "privy-check",
+    secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN]
+  },
+  async (event) => {
+    const site = event.params.site;
+    const alert = event.data.val();
+    if (!alert) return;
+
+    try {
+      const [securityPhones, superuserPhones] = await Promise.all([
+        getModPhoneNumbers(site, "security"),
+        getModPhoneNumbers(site, "superuser")
+      ]);
+      const phones = [...new Set([...securityPhones, ...superuserPhones])];
+      if (!phones.length) return;
+
+      const body = `MEDICAL ALERT at ${alert.locationName}. Reported by ${alert.triggeredByName}.`;
+      const client = twilio(TWILIO_ACCOUNT_SID.value(), TWILIO_AUTH_TOKEN.value());
+
+      await Promise.all(phones.map(phone =>
+        client.messages.create({ body, from: TWILIO_FROM_NUMBER, to: toE164(phone) })
+          .then(() => db.ref("smsLog").push({
+            to: toE164(phone), body, type: "medicalAlert", sentReal: true,
+            timestamp: admin.database.ServerValue.TIMESTAMP
+          }))
+          .catch((err) => console.error(`Medical alert SMS failed for ${phone}:`, err))
+      ));
+    } catch (err) {
+      console.error("sendMedicalAlertNotification error:", err);
+    }
+  }
+);
 
 exports.sendSupplyFulfilledAlert = onValueUpdated(
   {

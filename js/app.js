@@ -44,7 +44,8 @@ const ROLES = {
   maintenance: { label: "Maintenance", scope: "site" },
   preevent: { label: "Pre-Event", scope: "site" },
   executive: { label: "Executive", scope: "all" },
-  inventory: { label: "Inventory", scope: "site" }
+  inventory: { label: "Inventory", scope: "site" },
+  security: { label: "Security", scope: "site" }
 };
 
 // Checks if a user (either currentUser, or a raw record from /users during
@@ -223,6 +224,113 @@ function showAppShell() {
 
   setupSiteSelector();
   renderTabsForRoles(roleKeys);
+  setupMedicalAlertButton();
+}
+
+let medicalAlertWired = false;
+
+function setupMedicalAlertButton() {
+  if (medicalAlertWired) return; // only wire the listeners once per session
+  medicalAlertWired = true;
+
+  const modal = document.getElementById("medical-alert-modal");
+  const openBtn = document.getElementById("medical-alert-btn");
+  const cancelBtn = document.getElementById("medical-alert-cancel-btn");
+  const holdBtn = document.getElementById("medical-alert-hold-btn");
+  const progress = document.getElementById("medical-alert-progress");
+  const statusEl = document.getElementById("medical-alert-status");
+  const locationSelect = document.getElementById("medical-alert-location");
+
+  let holdInterval = null;
+  let holdStart = null;
+  const HOLD_MS = 3000;
+
+  function resetHold() {
+    if (holdInterval) clearInterval(holdInterval);
+    holdInterval = null;
+    holdStart = null;
+    progress.style.width = "0%";
+  }
+
+  function openModal() {
+    statusEl.textContent = "";
+    resetHold();
+    locationSelect.innerHTML = `<option>Loading...</option>`;
+    modal.style.display = "flex";
+
+    getLocationGroups(currentUser.site).then((groups) => {
+      const groupKeys = Object.keys(groups);
+      locationSelect.innerHTML = groupKeys.length
+        ? groupKeys.map(key => `<option value="${key}">${groups[key].name}</option>`).join("")
+        : `<option value="">No locations set up</option>`;
+    });
+  }
+
+  function closeModal() {
+    modal.style.display = "none";
+    resetHold();
+  }
+
+  openBtn.addEventListener("click", openModal);
+  cancelBtn.addEventListener("click", closeModal);
+  modal.addEventListener("click", (e) => { if (e.target === modal) closeModal(); });
+
+  function startHold() {
+    if (holdInterval) return;
+    holdStart = Date.now();
+    holdInterval = setInterval(() => {
+      const elapsed = Date.now() - holdStart;
+      const pct = Math.min(100, (elapsed / HOLD_MS) * 100);
+      progress.style.width = pct + "%";
+      if (elapsed >= HOLD_MS) {
+        resetHold();
+        sendMedicalAlert();
+      }
+    }, 50);
+  }
+
+  function cancelHold() {
+    resetHold();
+  }
+
+  holdBtn.addEventListener("mousedown", startHold);
+  holdBtn.addEventListener("touchstart", (e) => { e.preventDefault(); startHold(); });
+  holdBtn.addEventListener("mouseup", cancelHold);
+  holdBtn.addEventListener("mouseleave", cancelHold);
+  holdBtn.addEventListener("touchend", cancelHold);
+  holdBtn.addEventListener("touchcancel", cancelHold);
+
+  function sendMedicalAlert() {
+    const locationKey = locationSelect.value;
+    const locationName = locationSelect.options[locationSelect.selectedIndex]
+      ? locationSelect.options[locationSelect.selectedIndex].text
+      : "Unknown location";
+
+    if (!locationKey) {
+      statusEl.style.color = "var(--danger)";
+      statusEl.textContent = "No location available to select.";
+      return;
+    }
+
+    statusEl.style.color = "var(--muted)";
+    statusEl.textContent = "Sending...";
+
+    db.ref(`sites/${currentUser.site}/medicalAlerts`).push({
+      locationGroupKey: locationKey,
+      locationName,
+      triggeredByUid: currentUser.uid,
+      triggeredByName: `${currentUser.firstName} ${currentUser.lastName}`,
+      triggeredByRoles: getUserRoleKeys(currentUser).join(","),
+      timestamp: firebase.database.ServerValue.TIMESTAMP
+    }).then(() => {
+      statusEl.style.color = "var(--success)";
+      statusEl.textContent = "Alert sent. Security and Super User have been notified.";
+      setTimeout(closeModal, 2500);
+    }).catch((err) => {
+      statusEl.style.color = "var(--danger)";
+      statusEl.textContent = "Failed to send: " + err.message;
+    });
+  }
 }
 
 function setupSiteSelector() {
@@ -264,6 +372,7 @@ const ROLE_TABS = {
     { id: "during-event", label: "During Event" },
     { id: "closing-history", label: "Closing (History)" },
     { id: "oor-manage", label: "Out of Order (Manage)" },
+    { id: "medical-alerts", label: "Medical Alerts" },
     { id: "admin", label: "Admin Panel" }
   ],
   superuser: [
@@ -271,6 +380,7 @@ const ROLE_TABS = {
     { id: "during-event", label: "During Event" },
     { id: "closing-history", label: "Closing (History)" },
     { id: "oor-manage", label: "Out of Order (Manage)" },
+    { id: "medical-alerts", label: "Medical Alerts" },
     { id: "admin", label: "Admin Panel" }
   ],
   user: [
@@ -290,6 +400,9 @@ const ROLE_TABS = {
   ],
   inventory: [
     { id: "orders", label: "Orders" }
+  ],
+  security: [
+    { id: "medical-alerts", label: "Medical Alerts" }
   ]
 };
 
@@ -371,6 +484,11 @@ function renderTabContent(tabId) {
 
   if (tabId === "orders") {
     renderInventoryOrders(content);
+    return;
+  }
+
+  if (tabId === "medical-alerts") {
+    renderMedicalAlertsHistory(content);
     return;
   }
 
@@ -710,6 +828,43 @@ function renderStatusReportEntry(content) {
 }
 
 // ===================== DURING-EVENT: STATUS REPORT HISTORY (Superadmin/Super User) =====================
+// ===================== MEDICAL ALERTS: HISTORY (Security/Superadmin/Super User) =====================
+function renderMedicalAlertsHistory(content) {
+  const topSelector = document.getElementById("site-selector");
+  const site = hasRole(currentUser, "superadmin") ? topSelector.value : currentUser.site;
+
+  if (hasRole(currentUser, "superadmin") && site === "all") {
+    content.innerHTML = `<div class="panel-placeholder">Pick a specific site above to view medical alerts.</div>`;
+    return;
+  }
+
+  content.innerHTML = `<div class="card"><p style="color:var(--muted);">Loading...</p></div>`;
+
+  db.ref(`sites/${site}/medicalAlerts`).limitToLast(20).once("value").then((snap) => {
+    if (!snap.exists()) {
+      content.innerHTML = `<div class="panel-placeholder">No medical alerts logged for ${SITES[site]}.</div>`;
+      return;
+    }
+
+    const alerts = [];
+    snap.forEach((child) => alerts.push(child.val()));
+    alerts.reverse();
+
+    const cardsHtml = alerts.map((a) => {
+      const when = a.timestamp ? new Date(a.timestamp).toLocaleString() : "—";
+      return `
+        <div class="card" style="margin-bottom:10px; border-left:4px solid var(--danger);">
+          <div style="font-weight:700; color:var(--danger);">🚨 ${a.locationName}</div>
+          <div style="color:var(--muted); font-size:0.85rem; margin-top:4px;">Reported by ${a.triggeredByName}</div>
+          <div style="color:var(--muted); font-size:0.75rem;">${when}</div>
+        </div>
+      `;
+    }).join("");
+
+    content.innerHTML = `<h3 style="color:var(--navy); margin-bottom:14px;">Medical Alerts — ${SITES[site]}</h3>` + cardsHtml;
+  });
+}
+
 function renderStatusReportHistory(content) {
   const topSelector = document.getElementById("site-selector");
   const site = hasRole(currentUser, "superadmin") ? topSelector.value : currentUser.site;
@@ -2428,8 +2583,8 @@ function renderAdminPanel(content) {
           <label style="display:block; font-size:0.8rem; color:var(--muted); margin-bottom:4px;">Roles (select one or more)</label>
           <div id="add-staff-role-checkboxes" style="padding:8px; border:1px solid var(--border); border-radius:6px;">
             ${(isSuperadmin
-              ? ["superadmin", "superuser", "user", "maintenance", "preevent"]
-              : ["user", "maintenance", "preevent", "superuser"]
+              ? ["superadmin", "superuser", "user", "maintenance", "preevent", "security"]
+              : ["user", "maintenance", "preevent", "superuser", "security"]
             ).map((r, i) => `
               <label style="display:inline-block; margin:2px 10px 2px 0; font-size:0.85rem; cursor:pointer;">
                 <input type="checkbox" class="add-staff-role-checkbox" value="${r}" ${r === "user" ? "checked" : ""}> ${ROLES[r].label}
@@ -2478,7 +2633,7 @@ function renderAdminPanel(content) {
       <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">
         CSV columns required: <code>first_name, last_name, email, phone, role, site, pin</code>.
         Phone is optional at import — but anyone without a phone on file can't use "Forgot PIN?" text reset until one is added (editable below in the staff list).
-        Role must be superadmin / superuser / user / maintenance / preevent / executive / inventory — a person can hold more than one, separated by commas (e.g. "user,preevent"). Site can be blank if every role is superadmin/executive (defaults to "all").
+        Role must be superadmin / superuser / user / maintenance / preevent / executive / inventory / security — a person can hold more than one, separated by commas (e.g. "user,preevent"). Site can be blank if every role is superadmin/executive (defaults to "all").
         Leave <code>pin</code> blank to auto-generate a unique 4-digit PIN. This <strong>adds</strong> new staff — it does not remove existing users.
       </p>
       <button id="staff-template-btn" style="padding:8px 14px; background:none; border:1px solid var(--navy); color:var(--navy); border-radius:6px; cursor:pointer; margin-bottom:14px;">
@@ -2762,7 +2917,7 @@ function renderAdminPanel(content) {
   document.getElementById("staff-import-btn").addEventListener("click", () => {
     const fileInput = document.getElementById("staff-csv-input");
     const statusEl = document.getElementById("staff-import-status");
-    const VALID_ROLES = ["superadmin", "superuser", "user", "maintenance", "preevent", "executive", "inventory"];
+    const VALID_ROLES = ["superadmin", "superuser", "user", "maintenance", "preevent", "executive", "inventory", "security"];
 
     if (!fileInput.files.length) {
       statusEl.style.color = "var(--danger)";
@@ -3104,7 +3259,7 @@ function loadStaffTable(site) {
     const isSuperadminViewer = hasRole(currentUser, "superadmin");
 
     const rows = relevantUsers.map(u => {
-      const modCell = (hasRole(u, "superuser") || hasRole(u, "maintenance"))
+      const modCell = (hasRole(u, "superuser") || hasRole(u, "maintenance") || hasRole(u, "security"))
         ? `<input type="checkbox" class="mod-toggle" data-uid="${u.uid}" ${u.isMOD ? "checked" : ""} style="width:18px; height:18px; cursor:pointer;">`
         : `<span style="color:var(--border);">—</span>`;
       const pinCell = isSuperadminViewer
@@ -3117,10 +3272,10 @@ function loadStaffTable(site) {
         <button class="phone-save-btn" data-uid="${u.uid}" style="padding:4px 8px; font-size:0.75rem; background:var(--navy); color:white; border:none; border-radius:4px; cursor:pointer; margin-left:4px;">Save</button>
       `;
       const userRoleKeys = getUserRoleKeys(u);
-      const canEditThisRole = isSuperadminViewer || (hasRole(currentUser, "superuser") && userRoleKeys.every(r => ["user", "maintenance", "preevent", "superuser"].includes(r)));
+      const canEditThisRole = isSuperadminViewer || (hasRole(currentUser, "superuser") && userRoleKeys.every(r => ["user", "maintenance", "preevent", "superuser", "security"].includes(r)));
       const editableRoleOptions = isSuperadminViewer
         ? Object.keys(ROLES).filter(r => r !== "executive" && r !== "inventory")
-        : ["user", "maintenance", "preevent", "superuser"];
+        : ["user", "maintenance", "preevent", "superuser", "security"];
       const roleCell = canEditThisRole
         ? `<details class="role-edit-details" data-uid="${u.uid}">
             <summary style="cursor:pointer; padding:4px 8px; border:1px solid var(--border); border-radius:4px; display:inline-block; font-size:0.8rem;">${formatRoleLabels(u)} ▾</summary>

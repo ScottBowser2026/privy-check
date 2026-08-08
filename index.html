@@ -192,6 +192,7 @@
   .role-badge.preevent { background: #e6dff5; color: #5b3a9e; }
   .role-badge.executive { background: #dcefe8; color: #1f6b52; }
   .role-badge.inventory { background: #fbe8d6; color: #a8631a; }
+  .role-badge.security { background: #1e2a3a; color: #ffffff; }
 </style>
 </head>
 <body>
@@ -247,12 +248,29 @@
   <header class="topbar">
     <div class="brand">Privy <span>Check</span></div>
     <div class="topbar-right">
+      <button id="medical-alert-btn" style="background:var(--danger); color:white; border:none; padding:8px 16px; border-radius:6px; cursor:pointer; font-weight:700; font-size:0.85rem;">🚨 Medical Alert</button>
       <span id="user-name-display"></span>
       <span id="role-badge-display"></span>
       <select id="site-selector"><option>All Sites</option></select>
       <button id="logout-btn">Log Out</button>
     </div>
   </header>
+
+  <!-- Medical Alert modal -->
+  <div id="medical-alert-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:1000; align-items:center; justify-content:center;">
+    <div style="background:white; border-radius:12px; padding:28px; max-width:380px; width:90%; text-align:center;">
+      <h2 style="color:var(--danger); margin-bottom:6px;">🚨 Medical Alert</h2>
+      <p style="color:var(--muted); font-size:0.85rem; margin-bottom:18px;">This immediately texts on-duty Security and Super User. Only use for a real medical emergency.</p>
+      <label style="display:block; font-size:0.85rem; color:var(--muted); margin-bottom:6px; text-align:left;">Location</label>
+      <select id="medical-alert-location" style="width:100%; padding:10px; border:1px solid var(--border); border-radius:6px; margin-bottom:20px;"></select>
+      <button id="medical-alert-hold-btn" style="width:100%; padding:18px; background:var(--danger); color:white; border:none; border-radius:8px; font-weight:700; font-size:1rem; cursor:pointer; position:relative; overflow:hidden;">
+        Hold 3 Seconds to Send
+        <div id="medical-alert-progress" style="position:absolute; left:0; top:0; bottom:0; width:0%; background:rgba(255,255,255,0.35);"></div>
+      </button>
+      <div id="medical-alert-status" style="margin-top:14px; font-size:0.85rem;"></div>
+      <button id="medical-alert-cancel-btn" style="margin-top:10px; padding:8px 16px; background:none; border:none; color:var(--muted); cursor:pointer; font-size:0.85rem;">Cancel</button>
+    </div>
+  </div>
   <nav class="tabs" id="main-tabs">
     <!-- populated by JS based on role -->
   </nav>
@@ -270,6 +288,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@3/dist/email.min.js"></script>
-<script src="js/app.js?v=43"></script>
+<script src="js/app.js?v=44"></script>
 </body>
 </html>
