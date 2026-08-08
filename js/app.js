@@ -326,6 +326,7 @@ function renderTabsForRoles(roleKeys) {
 
 function renderTabContent(tabId) {
   const content = document.getElementById("main-content");
+  detachSupplyRequestsListener(); // stop any live listener from the tab we're leaving
 
   if (tabId === "admin") {
     renderAdminPanel(content);
@@ -1068,18 +1069,14 @@ function renderOutOfOrderManagement(content) {
         }
       });
 
-      const requestsCardPromise = sitesToShow.length === 1
-        ? renderSupplyRequestsCard(sitesToShow[0], () => renderOutOfOrderManagement(content))
-        : Promise.resolve("");
+      const singleSite = sitesToShow.length === 1 ? sitesToShow[0] : null;
+      const requestsSlot = singleSite ? supplyRequestsSlotHtml() : "";
 
-      requestsCardPromise.then((requestsResult) => {
-        const requestsHtml = requestsResult ? requestsResult.html : "";
-
-        if (!allFlags.length) {
-          content.innerHTML = requestsHtml || `<div class="panel-placeholder">No out-of-order reports for ${sitesToShow.length > 1 ? "any site" : SITES[sitesToShow[0]]} right now.</div>`;
-          if (requestsResult) requestsResult.wire(content);
-          return;
-        }
+      if (!allFlags.length) {
+        content.innerHTML = requestsSlot || `<div class="panel-placeholder">No out-of-order reports for ${sitesToShow.length > 1 ? "any site" : SITES[sitesToShow[0]]} right now.</div>`;
+        if (singleSite) attachLiveSupplyRequestsListener(singleSite);
+        return;
+      }
 
       allFlags.sort((a, b) => (b.flaggedAt || 0) - (a.flaggedAt || 0));
 
@@ -1116,8 +1113,8 @@ function renderOutOfOrderManagement(content) {
         `;
       }).join("");
 
-      content.innerHTML = requestsHtml + rowsHtml;
-      if (requestsResult) requestsResult.wire(content);
+      content.innerHTML = requestsSlot + rowsHtml;
+      if (singleSite) attachLiveSupplyRequestsListener(singleSite);
 
       content.querySelectorAll(".assign-select").forEach((select) => {
         select.addEventListener("change", () => {
@@ -1134,7 +1131,6 @@ function renderOutOfOrderManagement(content) {
             .catch((err) => alert("Failed to assign: " + err.message));
         });
       });
-      }); // close requestsCardPromise.then
     });
   });
 }
@@ -1163,20 +1159,24 @@ function renderMaintenanceQueue(content) {
     }
 
     if (!myFlags.length) {
-      renderSupplyRequestsCard(site, () => renderMaintenanceQueue(content)).then((requestsResult) => {
-        const requestsHtml = requestsResult ? requestsResult.html : "";
-        content.innerHTML = requestsHtml || `<div class="panel-placeholder">No units currently assigned to you.</div>`;
-        if (requestsResult) requestsResult.wire(content);
+      content.innerHTML = supplyRequestsSlotHtml();
+      attachLiveSupplyRequestsListener(site);
+      // If there truly are no requests either, the slot will just render empty —
+      // add a fallback message below it after the first listener callback.
+      db.ref(`sites/${site}/supplyRequests`).once("value").then((snap) => {
+        if (!snap.exists()) {
+          const slot = document.getElementById("supply-requests-live-slot");
+          if (slot && !slot.innerHTML.trim()) {
+            content.insertAdjacentHTML("beforeend", `<div class="panel-placeholder">No units currently assigned to you.</div>`);
+          }
+        }
       });
       return;
     }
 
     myFlags.sort((a, b) => (b.assignedAt || 0) - (a.assignedAt || 0));
 
-    renderSupplyRequestsCard(site, () => renderMaintenanceQueue(content)).then((requestsResult) => {
-      const requestsHtml = requestsResult ? requestsResult.html : "";
-
-      const flagsHtml = myFlags.map(f => {
+    const flagsHtml = myFlags.map(f => {
       const when = f.assignedAt ? new Date(f.assignedAt).toLocaleString() : "—";
       return `
         <div class="card" style="margin-bottom:10px;">
@@ -1193,8 +1193,8 @@ function renderMaintenanceQueue(content) {
       `;
     }).join("");
 
-    content.innerHTML = requestsHtml + flagsHtml;
-    if (requestsResult) requestsResult.wire(content);
+    content.innerHTML = supplyRequestsSlotHtml() + flagsHtml;
+    attachLiveSupplyRequestsListener(site);
 
     content.querySelectorAll(".complete-btn").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -1224,7 +1224,6 @@ function renderMaintenanceQueue(content) {
         .then(() => renderMaintenanceQueue(content))
         .catch((err) => alert("Failed to update: " + err.message));
       });
-    });
     });
   });
 }
@@ -2120,19 +2119,45 @@ function renderRequestItemPicker(site, groupKey, groupName) {
 
 // ===================== INVENTORY ROLE: ORDERS DASHBOARD =====================
 // ===================== SHARED: OPEN SUPPLY REQUESTS CARD (used by Orders, Out-of-Order Management, and Maintenance Queue) =====================
-function renderSupplyRequestsCard(site, onFulfilled) {
-  return Promise.all([
-    db.ref(`sites/${site}/supplyRequests`).orderByChild("status").equalTo("open").once("value"),
-    db.ref(`sites/${site}/supplyRequests`).orderByChild("status").equalTo("fulfilled").limitToLast(10).once("value")
-  ]).then(([openSnap, fulfilledSnap]) => {
+// ===================== SHARED: LIVE SUPPLY REQUESTS SLOT =====================
+// Real-time: listens continuously, so Superadmin/Super User/Maintenance see a
+// fulfillment the moment it happens, without needing to reload or re-click the tab.
+// Only one of these listens at a time — detachSupplyRequestsListener() below
+// cleans up whenever the person navigates to a different tab.
+let activeSupplyRequestsListener = null;
+
+function detachSupplyRequestsListener() {
+  if (activeSupplyRequestsListener) {
+    activeSupplyRequestsListener.ref.off("value", activeSupplyRequestsListener.callback);
+    activeSupplyRequestsListener = null;
+  }
+}
+
+// Returns the placeholder HTML to embed in a composite page — call
+// attachLiveSupplyRequestsListener(site) right after inserting this into the DOM.
+function supplyRequestsSlotHtml() {
+  return `<div id="supply-requests-live-slot"></div>`;
+}
+
+function attachLiveSupplyRequestsListener(site) {
+  detachSupplyRequestsListener();
+  const ref = db.ref(`sites/${site}/supplyRequests`);
+
+  const callback = (snap) => {
+    const slot = document.getElementById("supply-requests-live-slot");
+    if (!slot) return; // navigated away before this update arrived
+
     const openRequests = [];
-    if (openSnap.exists()) openSnap.forEach((child) => openRequests.push({ reqId: child.key, ...child.val() }));
-
     const fulfilledRequests = [];
-    if (fulfilledSnap.exists()) fulfilledSnap.forEach((child) => fulfilledRequests.push({ reqId: child.key, ...child.val() }));
+    if (snap.exists()) {
+      snap.forEach((child) => {
+        const r = { reqId: child.key, ...child.val() };
+        if (r.status === "open") openRequests.push(r);
+        else if (r.status === "fulfilled") fulfilledRequests.push(r);
+      });
+    }
     fulfilledRequests.sort((a, b) => (b.fulfilledAt || 0) - (a.fulfilledAt || 0));
-
-    if (!openRequests.length && !fulfilledRequests.length) return "";
+    const recentFulfilled = fulfilledRequests.slice(0, 10);
 
     const openHtml = openRequests.length ? `
       <div class="card">
@@ -2149,10 +2174,10 @@ function renderSupplyRequestsCard(site, onFulfilled) {
       </div>
     ` : "";
 
-    const fulfilledHtml = fulfilledRequests.length ? `
+    const fulfilledHtml = recentFulfilled.length ? `
       <div class="card">
         <h3 style="color:var(--navy); margin-bottom:14px;">Recently Fulfilled</h3>
-        ${fulfilledRequests.map(r => {
+        ${recentFulfilled.map(r => {
           const when = r.fulfilledAt ? new Date(r.fulfilledAt).toLocaleString() : "—";
           return `
             <div style="padding:8px 0; border-bottom:1px solid var(--border); font-size:0.85rem;">
@@ -2164,59 +2189,49 @@ function renderSupplyRequestsCard(site, onFulfilled) {
       </div>
     ` : "";
 
-    const html = openHtml + fulfilledHtml;
+    slot.innerHTML = openHtml + fulfilledHtml;
 
-    return { html, openRequests };
-  }).then((result) => {
-    if (!result) return "";
-    const { html, openRequests } = result;
-    // Return an object so the caller can insert the HTML and wire the buttons
-    // after it's actually in the DOM.
-    return {
-      html,
-      wire: (container) => {
-        container.querySelectorAll(".fulfill-request-btn").forEach((btn) => {
-          btn.addEventListener("click", () => {
-            const req = openRequests.find(r => r.reqId === btn.dataset.reqId);
-            const qtyStr = prompt(`How many cases of "${req.itemName}" (${req.sex}) were delivered to ${req.groupName}?`, "1");
-            if (qtyStr === null) return;
-            const qty = parseFloat(qtyStr);
-            if (isNaN(qty) || qty <= 0) {
-              alert("Enter a valid quantity greater than 0.");
-              return;
-            }
+    slot.querySelectorAll(".fulfill-request-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const req = openRequests.find(r => r.reqId === btn.dataset.reqId);
+        const qtyStr = prompt(`How many cases of "${req.itemName}" (${req.sex}) were delivered to ${req.groupName}?`, "1");
+        if (qtyStr === null) return;
+        const qty = parseFloat(qtyStr);
+        if (isNaN(qty) || qty <= 0) {
+          alert("Enter a valid quantity greater than 0.");
+          return;
+        }
 
-            db.ref(`sites/${site}/groupInventory/${req.groupKey}/${req.sex}/counts`).push({
-              type: "addition",
-              countedByUid: currentUser.uid,
-              countedByName: `${currentUser.firstName} ${currentUser.lastName}`,
-              countedByRole: getUserRoleKeys(currentUser).join(","),
-              timestamp: firebase.database.ServerValue.TIMESTAMP,
-              counts: { [req.itemKey]: { name: req.itemName, count: qty } },
-              note: `Fulfilled mid-event request from ${req.requestedByName}`
-            }).then(() => db.ref(`sites/${site}/supplyRequests/${btn.dataset.reqId}`).update({
-              status: "fulfilled",
-              fulfilledByUid: currentUser.uid,
-              fulfilledByName: `${currentUser.firstName} ${currentUser.lastName}`,
-              fulfilledAt: firebase.database.ServerValue.TIMESTAMP,
-              fulfilledQty: qty
-            })).then(() => onFulfilled())
-            .catch((err) => alert("Failed to mark fulfilled: " + err.message));
-          });
-        });
-      }
-    };
-  });
+        db.ref(`sites/${site}/groupInventory/${req.groupKey}/${req.sex}/counts`).push({
+          type: "addition",
+          countedByUid: currentUser.uid,
+          countedByName: `${currentUser.firstName} ${currentUser.lastName}`,
+          countedByRole: getUserRoleKeys(currentUser).join(","),
+          timestamp: firebase.database.ServerValue.TIMESTAMP,
+          counts: { [req.itemKey]: { name: req.itemName, count: qty } },
+          note: `Fulfilled mid-event request from ${req.requestedByName}`
+        }).then(() => db.ref(`sites/${site}/supplyRequests/${btn.dataset.reqId}`).update({
+          status: "fulfilled",
+          fulfilledByUid: currentUser.uid,
+          fulfilledByName: `${currentUser.firstName} ${currentUser.lastName}`,
+          fulfilledAt: firebase.database.ServerValue.TIMESTAMP,
+          fulfilledQty: qty
+        })).catch((err) => alert("Failed to mark fulfilled: " + err.message));
+        // No manual re-render needed — the .on("value") listener above fires
+        // automatically the instant this write lands, for everyone watching.
+      });
+    });
+  };
+
+  ref.on("value", callback);
+  activeSupplyRequestsListener = { ref, callback };
 }
 
 function renderInventoryOrders(content) {
   const site = currentUser.site;
   content.innerHTML = `<div class="card"><p style="color:var(--muted);">Loading orders...</p></div>`;
 
-  Promise.all([
-    getLocationGroups(site),
-    renderSupplyRequestsCard(site, () => renderInventoryOrders(content))
-  ]).then(([groups, requestsResult]) => {
+  getLocationGroups(site).then((groups) => {
     const groupKeys = Object.keys(groups);
     const groupFetches = groupKeys.map(key =>
       Promise.all([
@@ -2258,7 +2273,7 @@ function renderInventoryOrders(content) {
         collectOrders(key, name, "Male", maleItemsSnap, maleCountsSnap);
       });
 
-      const requestsHtml = requestsResult ? requestsResult.html : "";
+      const requestsSlot = supplyRequestsSlotHtml();
 
       const ordersHtml = orderRows.length ? `
         <div class="card">
@@ -2293,9 +2308,8 @@ function renderInventoryOrders(content) {
         </div>
       ` : `<div class="panel-placeholder">No items currently below par for ${SITES[site]}.</div>`;
 
-      content.innerHTML = requestsHtml + ordersHtml;
-
-      if (requestsResult) requestsResult.wire(content);
+      content.innerHTML = requestsSlot + ordersHtml;
+      attachLiveSupplyRequestsListener(site);
 
       const emailBtn = document.getElementById("email-order-btn");
       if (emailBtn) {
