@@ -2839,12 +2839,15 @@ function loadUnitsTable(site) {
       return;
     }
     const units = snap.val();
-    const rows = Object.values(units).map(u =>
+    const rows = Object.entries(units).map(([key, u]) =>
       `<tr>
         <td style="padding:8px; border-bottom:1px solid var(--border);">${u.name}</td>
         <td style="padding:8px; border-bottom:1px solid var(--border);">${u.location || "—"}</td>
         <td style="padding:8px; border-bottom:1px solid var(--border);">${u.type}</td>
         <td style="padding:8px; border-bottom:1px solid var(--border);">${u.status}</td>
+        <td style="padding:8px; border-bottom:1px solid var(--border);">
+          <button class="delete-unit-btn" data-key="${key}" data-name="${u.name} (${u.type})" style="padding:4px 10px; background:none; border:1px solid var(--danger); color:var(--danger); border-radius:4px; cursor:pointer; font-size:0.75rem;">Remove</button>
+        </td>
       </tr>`
     ).join("");
 
@@ -2856,10 +2859,20 @@ function loadUnitsTable(site) {
             <th style="padding:8px; border-bottom:2px solid var(--border);">Location</th>
             <th style="padding:8px; border-bottom:2px solid var(--border);">Type</th>
             <th style="padding:8px; border-bottom:2px solid var(--border);">Status</th>
+            <th style="padding:8px; border-bottom:2px solid var(--border);"></th>
           </tr>
         </thead>
         <tbody>${rows}</tbody>
       </table>
     `;
+
+    container.querySelectorAll(".delete-unit-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        if (!confirm(`Remove ${btn.dataset.name}? This can't be undone — any inventory count or out-of-order history tied to this specific unit key will be orphaned.`)) return;
+        db.ref(`sites/${site}/units/${btn.dataset.key}`).remove()
+          .then(() => loadUnitsTable(site))
+          .catch((err) => alert("Failed to remove: " + err.message));
+      });
+    });
   });
 }
