@@ -1074,10 +1074,18 @@ function renderOutOfOrderManagement(content) {
         }
       });
 
-      if (!allFlags.length) {
-        content.innerHTML = `<div class="panel-placeholder">No out-of-order reports for ${sitesToShow.length > 1 ? "any site" : SITES[sitesToShow[0]]} right now.</div>`;
-        return;
-      }
+      const requestsCardPromise = sitesToShow.length === 1
+        ? renderSupplyRequestsCard(sitesToShow[0], () => renderOutOfOrderManagement(content))
+        : Promise.resolve("");
+
+      requestsCardPromise.then((requestsResult) => {
+        const requestsHtml = requestsResult ? requestsResult.html : "";
+
+        if (!allFlags.length) {
+          content.innerHTML = requestsHtml || `<div class="panel-placeholder">No out-of-order reports for ${sitesToShow.length > 1 ? "any site" : SITES[sitesToShow[0]]} right now.</div>`;
+          if (requestsResult) requestsResult.wire(content);
+          return;
+        }
 
       allFlags.sort((a, b) => (b.flaggedAt || 0) - (a.flaggedAt || 0));
 
@@ -1114,7 +1122,8 @@ function renderOutOfOrderManagement(content) {
         `;
       }).join("");
 
-      content.innerHTML = rowsHtml;
+      content.innerHTML = requestsHtml + rowsHtml;
+      if (requestsResult) requestsResult.wire(content);
 
       content.querySelectorAll(".assign-select").forEach((select) => {
         select.addEventListener("change", () => {
@@ -1131,6 +1140,7 @@ function renderOutOfOrderManagement(content) {
             .catch((err) => alert("Failed to assign: " + err.message));
         });
       });
+      }); // close requestsCardPromise.then
     });
   });
 }
@@ -1152,13 +1162,20 @@ function renderMaintenanceQueue(content) {
     }
 
     if (!myFlags.length) {
-      content.innerHTML = `<div class="panel-placeholder">No units currently assigned to you.</div>`;
+      renderSupplyRequestsCard(site, () => renderMaintenanceQueue(content)).then((requestsResult) => {
+        const requestsHtml = requestsResult ? requestsResult.html : "";
+        content.innerHTML = requestsHtml || `<div class="panel-placeholder">No units currently assigned to you.</div>`;
+        if (requestsResult) requestsResult.wire(content);
+      });
       return;
     }
 
     myFlags.sort((a, b) => (b.assignedAt || 0) - (a.assignedAt || 0));
 
-    content.innerHTML = myFlags.map(f => {
+    renderSupplyRequestsCard(site, () => renderMaintenanceQueue(content)).then((requestsResult) => {
+      const requestsHtml = requestsResult ? requestsResult.html : "";
+
+      const flagsHtml = myFlags.map(f => {
       const when = f.assignedAt ? new Date(f.assignedAt).toLocaleString() : "—";
       return `
         <div class="card" style="margin-bottom:10px;">
@@ -1174,6 +1191,9 @@ function renderMaintenanceQueue(content) {
         </div>
       `;
     }).join("");
+
+    content.innerHTML = requestsHtml + flagsHtml;
+    if (requestsResult) requestsResult.wire(content);
 
     content.querySelectorAll(".complete-btn").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -1203,6 +1223,7 @@ function renderMaintenanceQueue(content) {
         .then(() => renderMaintenanceQueue(content))
         .catch((err) => alert("Failed to update: " + err.message));
       });
+    });
     });
   });
 }
@@ -2097,17 +2118,80 @@ function renderRequestItemPicker(site, groupKey, groupName) {
 }
 
 // ===================== INVENTORY ROLE: ORDERS DASHBOARD =====================
+// ===================== SHARED: OPEN SUPPLY REQUESTS CARD (used by Orders, Out-of-Order Management, and Maintenance Queue) =====================
+function renderSupplyRequestsCard(site, onFulfilled) {
+  return db.ref(`sites/${site}/supplyRequests`).orderByChild("status").equalTo("open").once("value").then((requestsSnap) => {
+    const openRequests = [];
+    if (requestsSnap.exists()) requestsSnap.forEach((child) => openRequests.push({ reqId: child.key, ...child.val() }));
+
+    if (!openRequests.length) return "";
+
+    const html = `
+      <div class="card">
+        <h3 style="color:var(--navy); margin-bottom:14px;">Open Mid-Event Requests</h3>
+        ${openRequests.map(r => `
+          <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid var(--border);">
+            <div>
+              <strong>${r.itemName}</strong> — ${r.groupName} (${r.sex})
+              <div style="color:var(--muted); font-size:0.75rem;">Requested by ${r.requestedByName}${r.note ? ": " + r.note : ""}</div>
+            </div>
+            <button class="fulfill-request-btn" data-req-id="${r.reqId}" style="padding:6px 12px; background:var(--success); color:white; border:none; border-radius:6px; cursor:pointer; font-size:0.8rem;">Mark Fulfilled</button>
+          </div>
+        `).join("")}
+      </div>
+    `;
+
+    return { html, openRequests };
+  }).then((result) => {
+    if (!result) return "";
+    const { html, openRequests } = result;
+    // Return an object so the caller can insert the HTML and wire the buttons
+    // after it's actually in the DOM.
+    return {
+      html,
+      wire: (container) => {
+        container.querySelectorAll(".fulfill-request-btn").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            const req = openRequests.find(r => r.reqId === btn.dataset.reqId);
+            const qtyStr = prompt(`How many cases of "${req.itemName}" (${req.sex}) were delivered to ${req.groupName}?`, "1");
+            if (qtyStr === null) return;
+            const qty = parseFloat(qtyStr);
+            if (isNaN(qty) || qty <= 0) {
+              alert("Enter a valid quantity greater than 0.");
+              return;
+            }
+
+            db.ref(`sites/${site}/groupInventory/${req.groupKey}/${req.sex}/counts`).push({
+              type: "addition",
+              countedByUid: currentUser.uid,
+              countedByName: `${currentUser.firstName} ${currentUser.lastName}`,
+              countedByRole: getUserRoleKeys(currentUser).join(","),
+              timestamp: firebase.database.ServerValue.TIMESTAMP,
+              counts: { [req.itemKey]: { name: req.itemName, count: qty } },
+              note: `Fulfilled mid-event request from ${req.requestedByName}`
+            }).then(() => db.ref(`sites/${site}/supplyRequests/${btn.dataset.reqId}`).update({
+              status: "fulfilled",
+              fulfilledByUid: currentUser.uid,
+              fulfilledByName: `${currentUser.firstName} ${currentUser.lastName}`,
+              fulfilledAt: firebase.database.ServerValue.TIMESTAMP,
+              fulfilledQty: qty
+            })).then(() => onFulfilled())
+            .catch((err) => alert("Failed to mark fulfilled: " + err.message));
+          });
+        });
+      }
+    };
+  });
+}
+
 function renderInventoryOrders(content) {
   const site = currentUser.site;
   content.innerHTML = `<div class="card"><p style="color:var(--muted);">Loading orders...</p></div>`;
 
   Promise.all([
     getLocationGroups(site),
-    db.ref(`sites/${site}/supplyRequests`).orderByChild("status").equalTo("open").once("value")
-  ]).then(([groups, requestsSnap]) => {
-    const openRequests = [];
-    if (requestsSnap.exists()) requestsSnap.forEach((child) => openRequests.push({ reqId: child.key, ...child.val() }));
-
+    renderSupplyRequestsCard(site, () => renderInventoryOrders(content))
+  ]).then(([groups, requestsResult]) => {
     const groupKeys = Object.keys(groups);
     const groupFetches = groupKeys.map(key =>
       Promise.all([
@@ -2149,20 +2233,7 @@ function renderInventoryOrders(content) {
         collectOrders(key, name, "Male", maleItemsSnap, maleCountsSnap);
       });
 
-      const requestsHtml = openRequests.length ? `
-        <div class="card">
-          <h3 style="color:var(--navy); margin-bottom:14px;">Open Mid-Event Requests</h3>
-          ${openRequests.map(r => `
-            <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid var(--border);">
-              <div>
-                <strong>${r.itemName}</strong> — ${r.groupName} (${r.sex})
-                <div style="color:var(--muted); font-size:0.75rem;">Requested by ${r.requestedByName}${r.note ? ": " + r.note : ""}</div>
-              </div>
-              <button class="fulfill-request-btn" data-req-id="${r.reqId}" style="padding:6px 12px; background:var(--success); color:white; border:none; border-radius:6px; cursor:pointer; font-size:0.8rem;">Mark Fulfilled</button>
-            </div>
-          `).join("")}
-        </div>
-      ` : "";
+      const requestsHtml = requestsResult ? requestsResult.html : "";
 
       const ordersHtml = orderRows.length ? `
         <div class="card">
@@ -2199,35 +2270,7 @@ function renderInventoryOrders(content) {
 
       content.innerHTML = requestsHtml + ordersHtml;
 
-      content.querySelectorAll(".fulfill-request-btn").forEach((btn) => {
-        btn.addEventListener("click", () => {
-          const req = openRequests.find(r => r.reqId === btn.dataset.reqId);
-          const qtyStr = prompt(`How many cases of "${req.itemName}" (${req.sex}) were delivered to ${req.groupName}?`, "1");
-          if (qtyStr === null) return; // cancelled
-          const qty = parseFloat(qtyStr);
-          if (isNaN(qty) || qty <= 0) {
-            alert("Enter a valid quantity greater than 0.");
-            return;
-          }
-
-          db.ref(`sites/${site}/groupInventory/${req.groupKey}/${req.sex}/counts`).push({
-            type: "addition",
-            countedByUid: currentUser.uid,
-            countedByName: `${currentUser.firstName} ${currentUser.lastName}`,
-            countedByRole: getUserRoleKeys(currentUser).join(","),
-            timestamp: firebase.database.ServerValue.TIMESTAMP,
-            counts: { [req.itemKey]: { name: req.itemName, count: qty } },
-            note: `Fulfilled mid-event request from ${req.requestedByName}`
-          }).then(() => db.ref(`sites/${site}/supplyRequests/${btn.dataset.reqId}`).update({
-            status: "fulfilled",
-            fulfilledByUid: currentUser.uid,
-            fulfilledByName: `${currentUser.firstName} ${currentUser.lastName}`,
-            fulfilledAt: firebase.database.ServerValue.TIMESTAMP,
-            fulfilledQty: qty
-          })).then(() => renderInventoryOrders(content))
-          .catch((err) => alert("Failed to mark fulfilled: " + err.message));
-        });
-      });
+      if (requestsResult) requestsResult.wire(content);
 
       const emailBtn = document.getElementById("email-order-btn");
       if (emailBtn) {
