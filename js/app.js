@@ -1869,7 +1869,14 @@ function getReorderRows(site) {
 }
 
 function reorderListHtml(orderRows, site) {
-  if (!orderRows.length) return "";
+  if (!orderRows.length) {
+    return `
+      <div class="card">
+        <h3 style="color:var(--navy); margin-bottom:14px;">Reorder List — ${SITES[site]}</h3>
+        <div class="panel-placeholder">No items currently below par.</div>
+      </div>
+    `;
+  }
   return `
     <div class="card">
       <h3 style="color:var(--navy); margin-bottom:14px;">Reorder List — ${SITES[site]}</h3>
@@ -3170,15 +3177,13 @@ function renderInventoryOrders(content) {
 
   getReorderRows(site).then((orderRows) => {
     const requestsSlot = supplyRequestsSlotHtml();
-    const ordersHtml = orderRows.length
-      ? reorderListHtml(orderRows, site) + `
-        <div class="card">
-          <button id="email-order-btn" style="padding:10px 20px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer;">
-            Email This Order
-          </button>
-        </div>
-      `
-      : `<div class="panel-placeholder">No items currently below par for ${SITES[site]}.</div>`;
+    const ordersHtml = reorderListHtml(orderRows, site) + (orderRows.length ? `
+      <div class="card">
+        <button id="email-order-btn" style="padding:10px 20px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer;">
+          Email This Order
+        </button>
+      </div>
+    ` : "");
 
     content.innerHTML = requestsSlot + ordersHtml;
     attachLiveSupplyRequestsListener(site);
