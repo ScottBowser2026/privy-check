@@ -2,6 +2,20 @@
 
 Multi-site privy (restroom) condition tracker for PARF / SRF / KRF / GARF, built on the standard Lancelot tracker architecture.
 
+## Recent changes
+
+**Stage 1 — Super User / Superadmin landing screen (this build)**
+- Super User and Superadmin now land on a 4-tile home screen (Admin Panel / Event / Inventory / Reports) instead of a flat tab bar.
+- Admin Panel tile drills into Pre-Event Setup and Staff & Units.
+- Event tile opens a 10,000ft stat row (open flags, overdue reports placeholder, attendants on shift, medical alerts today) plus a 4-tile sub-nav: Status Reports, Out of Order, Medical Alerts, Closing.
+- Inventory tile routes to the existing Orders view; Reports tile is a placeholder until the PDF/Firebase Storage archive stage ships.
+- Other roles (User, Maintenance, Pre-Event, Executive, Inventory, Security) are unchanged — still flat tab bars.
+
+**Next stages (not yet built)**
+- Out of Order protocol change: attendant flag auto-texts Maintenance (rather than direct Super User assignment); Maintenance assigns to their own internal staff and clears.
+- Closing flow generates a PDF (jsPDF) of the day's photos/notes/inventory and saves it to Firebase Storage — no Teams post, no delete for Super User.
+- Attendant reporting cadence enforcement: 2:00 in-app reminder, 2:15 text to attendant, 2:30 escalation text to Super User/MOD, via a Cloud Scheduler job.
+
 ## Current state (scaffold — v1)
 
 - **Firebase**: Uses the existing `faire-food-qc` project, pointed at the separate `privy-check` Realtime Database instance (`https://privy-check.firebaseio.com`). Shares the project's Web App config; data is fully isolated in its own database instance.
