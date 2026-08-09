@@ -3244,16 +3244,12 @@ function renderAdminPanel(content) {
     </div>
     <div class="card">
       <h3 style="color:var(--navy); margin-bottom:14px;">Current Locations — <span id="units-table-site-label"></span></h3>
+      <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">
+        Barcodes are pre-printed and posted on-site — scan or type each one in once to link it here.
+      </p>
       <div id="units-table-container">
         <p style="color:var(--muted);">Select a site above to view its locations.</p>
       </div>
-    </div>
-    <div class="card">
-      <h3 style="color:var(--navy); margin-bottom:14px;">Assign Location Barcodes</h3>
-      <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">
-        Barcodes are pre-printed and posted on-site. Scan or type each one in here once to link it to the right location — that's what attendants and Maintenance scan against.
-      </p>
-      <div id="barcode-assign-list"></div>
     </div>
     <div class="card">
       <h3 style="color:var(--navy); margin-bottom:14px;">Import Order Guide (XLSX)</h3>
@@ -3342,11 +3338,9 @@ function renderAdminPanel(content) {
   siteSelect.addEventListener("change", () => {
     loadUnitsTable(siteSelect.value);
     loadStaffTable(siteSelect.value);
-    loadBarcodeAssignments(siteSelect.value);
   });
   loadUnitsTable(siteSelect.value);
   loadStaffTable(siteSelect.value);
-  loadBarcodeAssignments(siteSelect.value);
 
   if (isSuperadmin) {
     setupSandboxModeToggle();
@@ -4115,107 +4109,25 @@ function loadStaffTable(site) {
   });
 }
 
-// Lets admin scan (or type) each pre-printed barcode once and link it to a
-// location. Stored at sites/{site}/locationBarcodes/{groupKey}. This is the
-// only place barcodes get associated — the app never generates its own.
-function loadBarcodeAssignments(site) {
-  const container = document.getElementById("barcode-assign-list");
-  if (!container) return;
-  container.innerHTML = `<p style="color:var(--muted);">Loading...</p>`;
-
-  Promise.all([
-    getLocationGroups(site),
-    db.ref(`sites/${site}/locationBarcodes`).once("value")
-  ]).then(([groups, barcodesSnap]) => {
-    const groupKeys = Object.keys(groups);
-    if (!groupKeys.length) {
-      container.innerHTML = `<p style="color:var(--muted);">No locations for this site yet.</p>`;
-      return;
-    }
-    const barcodes = barcodesSnap.exists() ? barcodesSnap.val() : {};
-
-    container.innerHTML = groupKeys.map(groupKey => `
-      <div class="barcode-assign-row" data-group-key="${groupKey}" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:10px 0; border-bottom:1px solid var(--border);">
-        <div style="min-width:160px; font-weight:600;">${groups[groupKey].name}</div>
-        <input type="text" class="barcode-value-input" data-group-key="${groupKey}" value="${barcodes[groupKey] || ""}" placeholder="Scan or type barcode value" style="flex:1; min-width:180px; padding:6px 10px; border:1px solid var(--border); border-radius:6px;">
-        <button class="barcode-scan-btn" data-group-key="${groupKey}" style="padding:6px 12px; background:none; border:1px solid var(--navy); color:var(--navy); border-radius:6px; cursor:pointer; font-size:0.8rem;">Scan</button>
-        <button class="barcode-save-btn" data-group-key="${groupKey}" style="padding:6px 12px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer; font-size:0.8rem;">Save</button>
-        <span class="barcode-save-status" data-group-key="${groupKey}" style="font-size:0.75rem;"></span>
-      </div>
-      <div class="barcode-scan-reader" data-group-key="${groupKey}" style="display:none; max-width:280px; margin-bottom:10px;"></div>
-    `).join("");
-
-    container.querySelectorAll(".barcode-save-btn").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const groupKey = btn.dataset.groupKey;
-        const input = container.querySelector(`.barcode-value-input[data-group-key="${groupKey}"]`);
-        const statusEl = container.querySelector(`.barcode-save-status[data-group-key="${groupKey}"]`);
-        const value = input.value.trim();
-        if (!value) {
-          statusEl.style.color = "var(--danger)";
-          statusEl.textContent = "Empty";
-          return;
-        }
-        statusEl.style.color = "var(--muted)";
-        statusEl.textContent = "Saving...";
-        db.ref(`sites/${site}/locationBarcodes/${groupKey}`).set(value)
-          .then(() => {
-            statusEl.style.color = "var(--success)";
-            statusEl.textContent = "Saved";
-          })
-          .catch((err) => {
-            statusEl.style.color = "var(--danger)";
-            statusEl.textContent = "Failed: " + err.message;
-          });
-      });
-    });
-
-    container.querySelectorAll(".barcode-scan-btn").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const groupKey = btn.dataset.groupKey;
-        const readerDiv = container.querySelector(`.barcode-scan-reader[data-group-key="${groupKey}"]`);
-        const input = container.querySelector(`.barcode-value-input[data-group-key="${groupKey}"]`);
-        if (typeof Html5Qrcode === "undefined") {
-          alert("Scanner failed to load. Reload the page and try again.");
-          return;
-        }
-        readerDiv.innerHTML = `<div id="barcode-reader-${groupKey}" style="border-radius:8px; overflow:hidden;"></div>`;
-        readerDiv.style.display = "block";
-        const scanner = new Html5Qrcode(`barcode-reader-${groupKey}`);
-        scanner.start(
-          { facingMode: "environment" },
-          { fps: 10, qrbox: 200 },
-          (decodedText) => {
-            input.value = decodedText.trim();
-            scanner.stop().catch(() => {});
-            readerDiv.style.display = "none";
-            readerDiv.innerHTML = "";
-          },
-          () => {}
-        ).catch((err) => {
-          alert("Couldn't access camera: " + err);
-          readerDiv.style.display = "none";
-        });
-      });
-    });
-  });
-}
-
+// Groups units by location, shows an out-of-order count per location, and
+// lets admin assign/scan that location's pre-printed barcode right there —
+// combines what used to be two separate sections into one.
 function loadUnitsTable(site) {
   document.getElementById("units-table-site-label").textContent = SITES[site] || site;
   const container = document.getElementById("units-table-container");
   container.innerHTML = "<p style='color:var(--muted);'>Loading...</p>";
 
-  db.ref(`sites/${site}/units`).once("value").then((snap) => {
-    if (!snap.exists()) {
-      container.innerHTML = "<p style='color:var(--muted);'>No units imported yet for this site.</p>";
+  Promise.all([
+    db.ref(`sites/${site}/units`).once("value"),
+    db.ref(`sites/${site}/locationBarcodes`).once("value")
+  ]).then(([unitsSnap, barcodesSnap]) => {
+    if (!unitsSnap.exists()) {
+      container.innerHTML = "<p style='color:var(--muted);'>No locations imported yet for this site.</p>";
       return;
     }
-    const units = snap.val();
+    const units = unitsSnap.val();
+    const barcodes = barcodesSnap.exists() ? barcodesSnap.val() : {};
 
-    // Group by location so a big location (e.g. 25 units) shows an
-    // at-a-glance out-of-order count instead of forcing a scroll through
-    // every individual row to figure out how many are down.
     const groups = {};
     Object.entries(units).forEach(([key, u]) => {
       const groupKey = u.name.trim().replace(/[.#$/\[\]]/g, "_");
@@ -4228,11 +4140,11 @@ function loadUnitsTable(site) {
       const total = g.units.length;
       const badgeColor = outOfOrderCount > 0 ? "var(--danger)" : "var(--success)";
       const badgeBg = outOfOrderCount > 0 ? "#fbe9e7" : "#e6f6ea";
+      const barcodeValue = barcodes[groupKey] || "";
 
       const unitRows = g.units.map(u => `
         <tr>
           <td style="padding:8px; border-bottom:1px solid var(--border);">${u.type}</td>
-          <td style="padding:8px; border-bottom:1px solid var(--border);">${u.status}</td>
           <td style="padding:8px; border-bottom:1px solid var(--border);">
             <button class="delete-unit-btn" data-key="${u.key}" data-name="${u.name} (${u.type})" style="padding:4px 10px; background:none; border:1px solid var(--danger); color:var(--danger); border-radius:4px; cursor:pointer; font-size:0.75rem;">Remove</button>
           </td>
@@ -4253,12 +4165,19 @@ function loadUnitsTable(site) {
               <span class="location-group-arrow" data-group-key="${groupKey}" style="color:var(--muted);">▾</span>
             </div>
           </div>
-          <div class="location-group-detail" data-group-key="${groupKey}" style="display:none; margin-top:10px;">
+          <div class="location-group-detail" data-group-key="${groupKey}" style="display:none; margin-top:12px;">
+            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding-bottom:12px; margin-bottom:12px; border-bottom:1px solid var(--border);">
+              <label style="font-size:0.8rem; color:var(--muted); min-width:60px;">Barcode</label>
+              <input type="text" class="barcode-value-input" data-group-key="${groupKey}" value="${barcodeValue}" placeholder="Scan or type barcode value" style="flex:1; min-width:160px; padding:6px 10px; border:1px solid var(--border); border-radius:6px;">
+              <button class="barcode-scan-btn" data-group-key="${groupKey}" style="padding:6px 12px; background:none; border:1px solid var(--navy); color:var(--navy); border-radius:6px; cursor:pointer; font-size:0.8rem;">Scan</button>
+              <button class="barcode-save-btn" data-group-key="${groupKey}" style="padding:6px 12px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer; font-size:0.8rem;">Save</button>
+              <span class="barcode-save-status" data-group-key="${groupKey}" style="font-size:0.75rem;"></span>
+            </div>
+            <div class="barcode-scan-reader" data-group-key="${groupKey}" style="display:none; max-width:280px; margin-bottom:12px;"></div>
             <table style="width:100%; border-collapse:collapse; font-size:0.85rem;">
               <thead>
                 <tr style="text-align:left; color:var(--muted);">
                   <th style="padding:8px; border-bottom:2px solid var(--border);">Type</th>
-                  <th style="padding:8px; border-bottom:2px solid var(--border);">Status</th>
                   <th style="padding:8px; border-bottom:2px solid var(--border);"></th>
                 </tr>
               </thead>
@@ -4289,6 +4208,62 @@ function loadUnitsTable(site) {
         db.ref(`sites/${site}/units/${btn.dataset.key}`).remove()
           .then(() => loadUnitsTable(site))
           .catch((err) => alert("Failed to remove: " + err.message));
+      });
+    });
+
+    container.querySelectorAll(".barcode-save-btn").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const groupKey = btn.dataset.groupKey;
+        const input = container.querySelector(`.barcode-value-input[data-group-key="${groupKey}"]`);
+        const statusEl = container.querySelector(`.barcode-save-status[data-group-key="${groupKey}"]`);
+        const value = input.value.trim();
+        if (!value) {
+          statusEl.style.color = "var(--danger)";
+          statusEl.textContent = "Empty";
+          return;
+        }
+        statusEl.style.color = "var(--muted)";
+        statusEl.textContent = "Saving...";
+        db.ref(`sites/${site}/locationBarcodes/${groupKey}`).set(value)
+          .then(() => {
+            statusEl.style.color = "var(--success)";
+            statusEl.textContent = "Saved";
+          })
+          .catch((err) => {
+            statusEl.style.color = "var(--danger)";
+            statusEl.textContent = "Failed: " + err.message;
+          });
+      });
+    });
+
+    container.querySelectorAll(".barcode-scan-btn").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const groupKey = btn.dataset.groupKey;
+        const readerDiv = container.querySelector(`.barcode-scan-reader[data-group-key="${groupKey}"]`);
+        const input = container.querySelector(`.barcode-value-input[data-group-key="${groupKey}"]`);
+        if (typeof Html5Qrcode === "undefined") {
+          alert("Scanner failed to load. Reload the page and try again.");
+          return;
+        }
+        readerDiv.innerHTML = `<div id="barcode-reader-${groupKey}" style="border-radius:8px; overflow:hidden;"></div>`;
+        readerDiv.style.display = "block";
+        const scanner = new Html5Qrcode(`barcode-reader-${groupKey}`);
+        scanner.start(
+          { facingMode: "environment" },
+          { fps: 10, qrbox: 200 },
+          (decodedText) => {
+            input.value = decodedText.trim();
+            scanner.stop().catch(() => {});
+            readerDiv.style.display = "none";
+            readerDiv.innerHTML = "";
+          },
+          () => {}
+        ).catch((err) => {
+          alert("Couldn't access camera: " + err);
+          readerDiv.style.display = "none";
+        });
       });
     });
   });
