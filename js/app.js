@@ -3422,9 +3422,9 @@ function renderAdminPanel(content) {
       <div id="barcode-panel"></div>
     </div>
     <div class="card">
-      <h3 style="color:var(--navy); margin-bottom:14px;">Units — ${SITES[currentUser.site] || ""}</h3>
+      <h3 style="color:var(--navy); margin-bottom:14px;">Locations — ${SITES[currentUser.site] || ""}</h3>
       <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">
-        Add units one at a time, or import a CSV (columns: <code>unit_name, location, type</code> \u2014 type must be Male, Female, or ADA). Importing <strong>replaces all units</strong> for the selected site.
+        Add locations one at a time, or import a CSV (columns: <code>unit_name, location, type</code> \u2014 type must be Male, Female, or ADA). Importing <strong>replaces all locations</strong> for the selected site.
       </p>
       <label style="display:block; font-size:0.85rem; margin-bottom:6px; color:var(--muted);">Site</label>
       <select id="admin-site-select" style="padding:8px; border-radius:6px; border:1px solid var(--border); margin-bottom:14px; width:200px;">
@@ -3446,11 +3446,11 @@ function renderAdminPanel(content) {
 
       <div style="display:grid; grid-template-columns: 2fr 2fr 1fr; gap:12px; margin-bottom:12px;">
         <div>
-          <label style="display:block; font-size:0.8rem; color:var(--muted); margin-bottom:4px;">Unit Name</label>
+          <label style="display:block; font-size:0.8rem; color:var(--muted); margin-bottom:4px;">Location Name</label>
           <input type="text" id="add-unit-name" placeholder="e.g. King Loo" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px;">
         </div>
         <div>
-          <label style="display:block; font-size:0.8rem; color:var(--muted); margin-bottom:4px;">Location</label>
+          <label style="display:block; font-size:0.8rem; color:var(--muted); margin-bottom:4px;">Area (optional)</label>
           <input type="text" id="add-unit-location" placeholder="e.g. Absinthe Area" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px;">
         </div>
         <div>
@@ -3463,14 +3463,14 @@ function renderAdminPanel(content) {
         </div>
       </div>
       <button id="add-unit-btn" style="padding:10px 20px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer;">
-        Add Unit
+        Add Location
       </button>
       <div id="add-unit-status" style="margin-top:12px; font-size:0.85rem;"></div>
     </div>
     <div class="card">
-      <h3 style="color:var(--navy); margin-bottom:14px;">Current Units — <span id="units-table-site-label"></span></h3>
+      <h3 style="color:var(--navy); margin-bottom:14px;">Current Locations — <span id="units-table-site-label"></span></h3>
       <div id="units-table-container">
-        <p style="color:var(--muted);">Select a site above to view its units.</p>
+        <p style="color:var(--muted);">Select a site above to view its locations.</p>
       </div>
     </div>
     <div class="card">
@@ -3531,7 +3531,7 @@ function renderAdminPanel(content) {
           <label style="display:block; font-size:0.8rem; color:var(--muted); margin-bottom:4px;">Site</label>
           <select id="add-staff-site" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px;" ${isSuperadmin ? "" : "disabled"}>
             ${isSuperadmin
-              ? `<option value="all">All Sites</option>` + Object.entries(SITES).map(([key, label]) => `<option value="${key}">${label}</option>`).join("")
+              ? Object.entries(SITES).map(([key, label]) => `<option value="${key}">${label}</option>`).join("")
               : `<option value="${currentUser.site}">${SITES[currentUser.site]}</option>`}
           </select>
         </div>
@@ -3584,10 +3584,22 @@ function renderAdminPanel(content) {
       cb.addEventListener("change", () => {
         const checked = addRoleCheckboxes().filter(c => c.checked).map(c => c.value);
         const allOrgWide = checked.length && checked.every(r => r === "superadmin" || r === "executive");
+        const hasAllOption = Array.from(addSiteSelect.options).some(o => o.value === "all");
+
         if (allOrgWide) {
+          if (!hasAllOption) {
+            const opt = document.createElement("option");
+            opt.value = "all";
+            opt.textContent = "All Sites (org-wide role)";
+            addSiteSelect.insertBefore(opt, addSiteSelect.firstChild);
+          }
           addSiteSelect.value = "all";
           addSiteSelect.disabled = true;
         } else {
+          if (hasAllOption) {
+            Array.from(addSiteSelect.options).find(o => o.value === "all").remove();
+            addSiteSelect.selectedIndex = 0;
+          }
           addSiteSelect.disabled = false;
         }
       });
@@ -4415,8 +4427,8 @@ function loadUnitsTable(site) {
       <table style="width:100%; border-collapse:collapse; font-size:0.85rem;">
         <thead>
           <tr style="text-align:left; color:var(--muted);">
-            <th style="padding:8px; border-bottom:2px solid var(--border);">Unit</th>
             <th style="padding:8px; border-bottom:2px solid var(--border);">Location</th>
+            <th style="padding:8px; border-bottom:2px solid var(--border);">Area</th>
             <th style="padding:8px; border-bottom:2px solid var(--border);">Type</th>
             <th style="padding:8px; border-bottom:2px solid var(--border);">Status</th>
             <th style="padding:8px; border-bottom:2px solid var(--border);"></th>
