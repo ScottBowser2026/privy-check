@@ -994,6 +994,126 @@ function renderUnitQRCodes(content, site) {
   });
 }
 
+// ===================== SUPER USER / ADMIN: SCAN LOOKUP =====================
+// Lets Super User/Superadmin scan a printed location or unit code (the same
+// codes generated in Admin Panel) to instantly pull up its status, rather
+// than hunting through lists. Live camera only, same as the attendant gates.
+function renderScanLookup(content, site) {
+  content.innerHTML = `
+    <div class="card">
+      <h4 style="color:var(--navy); margin-bottom:8px;">Scan a location or unit code</h4>
+      <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">Scan any printed code to jump straight to its current status.</p>
+      <button id="admin-start-scan-btn" style="padding:10px 20px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer; font-weight:600; margin-bottom:12px;">
+        Scan Code
+      </button>
+      <div id="admin-qr-reader" style="width:100%; max-width:320px; border-radius:8px; overflow:hidden;"></div>
+      <div id="admin-scan-status" style="margin-top:10px; font-size:0.85rem;"></div>
+      <div id="admin-scan-result" style="margin-top:14px;"></div>
+    </div>
+  `;
+
+  const statusEl = document.getElementById("admin-scan-status");
+  const resultEl = document.getElementById("admin-scan-result");
+  let scanner = null;
+
+  function handleResult(decoded) {
+    const text = decoded.trim();
+    const unitMatch = text.match(/^PRIVYCHECK-UNIT::([a-z]+)::(.+)$/);
+    const locationMatch = text.match(/^PRIVYCHECK::([a-z]+)::(.+)$/);
+
+    if (scanner) scanner.stop().catch(() => {});
+
+    if (unitMatch) {
+      const [, scannedSite, unitKey] = unitMatch;
+      lookupUnit(scannedSite, unitKey);
+    } else if (locationMatch) {
+      const [, scannedSite, groupKey] = locationMatch;
+      lookupLocation(scannedSite, groupKey);
+    } else {
+      statusEl.style.color = "var(--danger)";
+      statusEl.textContent = "That doesn't look like a Privy Check code.";
+    }
+  }
+
+  function lookupUnit(scannedSite, unitKey) {
+    db.ref(`sites/${scannedSite}/units/${unitKey}`).once("value").then((snap) => {
+      if (!snap.exists()) {
+        statusEl.style.color = "var(--danger)";
+        statusEl.textContent = "Unit not found — it may have been removed.";
+        return;
+      }
+      const u = snap.val();
+      const isOk = u.status !== "outOfOrder";
+      statusEl.textContent = "";
+      resultEl.innerHTML = `
+        <div class="card" style="border-left:4px solid ${isOk ? "var(--success)" : "var(--danger)"};">
+          <div style="font-weight:700; color:var(--navy);">${u.name} — ${u.type}</div>
+          <div style="color:${isOk ? "var(--success)" : "var(--danger)"}; font-weight:600; margin-top:6px;">${isOk ? "OK" : "Out of Order"}</div>
+          <div style="color:var(--muted); font-size:0.8rem; margin-top:4px;">Site: ${SITES[scannedSite] || scannedSite}</div>
+        </div>
+      `;
+    });
+  }
+
+  function lookupLocation(scannedSite, groupKey) {
+    Promise.all([
+      db.ref(`sites/${scannedSite}/units`).once("value"),
+      db.ref(`sites/${scannedSite}/outOfOrder`).once("value")
+    ]).then(([unitsSnap, flagsSnap]) => {
+      const unitsInGroup = [];
+      if (unitsSnap.exists()) {
+        unitsSnap.forEach((child) => {
+          const u = child.val();
+          if (u.name.trim().replace(/[.#$/\[\]]/g, "_") === groupKey) unitsInGroup.push({ key: child.key, ...u });
+        });
+      }
+      if (!unitsInGroup.length) {
+        statusEl.style.color = "var(--danger)";
+        statusEl.textContent = "Location not found — it may have been removed.";
+        return;
+      }
+      let openFlagCount = 0;
+      if (flagsSnap.exists()) {
+        flagsSnap.forEach((child) => {
+          const f = child.val();
+          if (f.groupKey === groupKey && f.status !== "closed") openFlagCount++;
+        });
+      }
+      statusEl.textContent = "";
+      resultEl.innerHTML = `
+        <div class="card" style="border-left:4px solid ${openFlagCount ? "var(--danger)" : "var(--success)"};">
+          <div style="font-weight:700; color:var(--navy);">${unitsInGroup[0].name}</div>
+          <div style="color:var(--muted); font-size:0.85rem; margin-top:4px;">${unitsInGroup.length} unit${unitsInGroup.length === 1 ? "" : "s"} · Site: ${SITES[scannedSite] || scannedSite}</div>
+          <div style="color:${openFlagCount ? "var(--danger)" : "var(--success)"}; font-weight:600; margin-top:6px;">
+            ${openFlagCount ? `${openFlagCount} open flag${openFlagCount === 1 ? "" : "s"}` : "No open flags"}
+          </div>
+        </div>
+      `;
+    });
+  }
+
+  document.getElementById("admin-start-scan-btn").addEventListener("click", () => {
+    resultEl.innerHTML = "";
+    if (typeof Html5Qrcode === "undefined") {
+      statusEl.style.color = "var(--danger)";
+      statusEl.textContent = "Scanner failed to load. Reload the page and try again.";
+      return;
+    }
+    scanner = new Html5Qrcode("admin-qr-reader");
+    statusEl.style.color = "var(--muted)";
+    statusEl.textContent = "Requesting camera access...";
+    scanner.start(
+      { facingMode: "environment" },
+      { fps: 10, qrbox: 220 },
+      (decodedText) => handleResult(decodedText),
+      () => {}
+    ).catch((err) => {
+      statusEl.style.color = "var(--danger)";
+      statusEl.textContent = "Couldn't access camera: " + err;
+    });
+  });
+}
+
 function renderLocationQRCodes(content, site) {
   content.innerHTML = `<div class="card"><p style="color:var(--muted);">Loading locations...</p></div>`;
   getLocationGroups(site).then((groups) => {
@@ -3263,6 +3383,21 @@ function renderAdminPanel(content) {
 
   content.innerHTML = sandboxCard + `
     <div class="card">
+      <h3 style="color:var(--navy); margin-bottom:14px;">Scan Lookup</h3>
+      <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">
+        Scan any printed location or unit code to instantly check its status \u2014 no need to hunt through lists.
+      </p>
+      <label style="display:block; font-size:0.85rem; color:var(--muted); margin-bottom:6px;">Site</label>
+      <select id="scan-lookup-site-select" style="padding:8px; border-radius:6px; border:1px solid var(--border); margin-bottom:14px; width:200px;">
+        ${siteOptions}
+      </select>
+      <br>
+      <button id="open-scan-lookup-btn" style="padding:10px 18px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer;">
+        Open Scanner
+      </button>
+      <div id="scan-lookup-panel" style="margin-top:16px;"></div>
+    </div>
+    <div class="card">
       <h3 style="color:var(--navy); margin-bottom:14px;">Location QR Codes</h3>
       <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">
         Print a code for each location and post it on-site. Attendants scan it to prove they're physically there before submitting a status report.
@@ -3602,6 +3737,10 @@ function renderAdminPanel(content) {
           statusEl.textContent = "Failed to add: " + err.message;
         });
     });
+  });
+
+  document.getElementById("open-scan-lookup-btn").addEventListener("click", () => {
+    renderScanLookup(document.getElementById("scan-lookup-panel"), document.getElementById("scan-lookup-site-select").value);
   });
 
   document.getElementById("view-qr-codes-btn").addEventListener("click", () => {
