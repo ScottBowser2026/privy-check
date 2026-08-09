@@ -3543,12 +3543,6 @@ function renderAdminPanel(content) {
     </div>
     <div class="card">
       <h3 style="color:var(--navy); margin-bottom:14px;">Import Staff (CSV)</h3>
-      <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">
-        CSV columns required: <code>first_name, last_name, email, phone, role, site, pin</code>.
-        Phone is optional at import — but anyone without a phone on file can't use "Forgot PIN?" text reset until one is added (editable below in the staff list).
-        Role must be superadmin / superuser / user / maintenance / preevent / executive / inventory / security — a person can hold more than one, separated by commas (e.g. "user,preevent"). Site can be blank if every role is superadmin/executive (defaults to "all").
-        Leave <code>pin</code> blank to auto-generate a unique 4-digit PIN. This <strong>adds</strong> new staff — it does not remove existing users.
-      </p>
       <button id="staff-template-btn" style="padding:8px 14px; background:none; border:1px solid var(--navy); color:var(--navy); border-radius:6px; cursor:pointer; margin-bottom:14px;">
         Download staff template
       </button>
