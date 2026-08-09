@@ -185,8 +185,10 @@ async function getModContacts(site, roleKey) {
 
 /**
  * sendSupplyRequestAlert
- * Fires when a User submits a mid-event supply request. Texts every
- * on-duty (MOD) Super User and Maintenance tech at that site.
+ * Fires when a User submits a mid-event supply request. Routes the full
+ * request directly to on-duty (MOD) Maintenance — they're the ones who act
+ * on it. Super User only gets a shorter "this was sent to Maintenance"
+ * notification, mirroring the Out of Order alert pattern.
  */
 exports.sendSupplyRequestAlert = onValueCreated(
   {
@@ -200,15 +202,21 @@ exports.sendSupplyRequestAlert = onValueCreated(
     if (!req) return;
 
     try {
-      const [superuserPhones, maintenancePhones] = await Promise.all([
-        getModPhoneNumbers(site, "superuser"),
-        getModPhoneNumbers(site, "maintenance")
+      const [maintenanceContacts, superuserPhones] = await Promise.all([
+        getModContacts(site, "maintenance"),
+        getModPhoneNumbers(site, "superuser")
       ]);
-      const phones = [...new Set([...superuserPhones, ...maintenancePhones])];
-      if (!phones.length) return;
 
-      const body = `Privy Check: ${req.itemName} needed at ${req.groupName} (${req.sex}). Requested by ${req.requestedByName}.`;
-      await Promise.all(phones.map(phone => sendSmsOrLog(phone, body, "supplyRequestCreated")));
+      const maintenanceBody = `Privy Check: ${req.itemName} needed at ${req.groupName} (${req.sex}). Requested by ${req.requestedByName}.`;
+      await Promise.all(maintenanceContacts.map(c => sendSmsOrLog(c.phone, maintenanceBody, "supplyRequestCreated")));
+
+      if (superuserPhones.length) {
+        const namesList = maintenanceContacts.length
+          ? maintenanceContacts.map(c => c.name).join(", ")
+          : "no on-duty Maintenance tech";
+        const superuserBody = `Privy Check: ${req.itemName} requested at ${req.groupName} — alert sent to Maintenance MOD (${namesList}).`;
+        await Promise.all(superuserPhones.map(phone => sendSmsOrLog(phone, superuserBody, "supplyRequestNotified")));
+      }
     } catch (err) {
       console.error("sendSupplyRequestAlert error:", err);
     }
