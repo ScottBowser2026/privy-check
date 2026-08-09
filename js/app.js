@@ -3274,7 +3274,20 @@ function renderAdminPanel(content) {
       </div>
     </div>
     <div class="card">
-      <h3 style="color:var(--navy); margin-bottom:14px;">Add Staff Member</h3>
+      <h3 style="color:var(--navy); margin-bottom:14px;">Add Staff</h3>
+      <button id="staff-template-btn" style="padding:8px 14px; background:none; border:1px solid var(--navy); color:var(--navy); border-radius:6px; cursor:pointer; margin-bottom:14px;">
+        Download staff template
+      </button>
+      <br>
+      <input type="file" id="staff-csv-input" accept=".csv" style="margin-bottom:14px;">
+      <br>
+      <button id="staff-import-btn" style="padding:10px 18px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer;">
+        Import Staff CSV
+      </button>
+      <div id="staff-import-status" style="margin-top:12px; font-size:0.85rem; margin-bottom:16px;"></div>
+
+      <hr style="border:none; border-top:1px solid var(--border); margin:16px 0;">
+
       <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-bottom:12px;">
         <div>
           <label style="display:block; font-size:0.8rem; color:var(--muted); margin-bottom:4px;">First Name</label>
@@ -3318,19 +3331,6 @@ function renderAdminPanel(content) {
         Add Staff Member
       </button>
       <div id="add-staff-status" style="margin-top:12px; font-size:0.85rem;"></div>
-    </div>
-    <div class="card">
-      <h3 style="color:var(--navy); margin-bottom:14px;">Import Staff (CSV)</h3>
-      <button id="staff-template-btn" style="padding:8px 14px; background:none; border:1px solid var(--navy); color:var(--navy); border-radius:6px; cursor:pointer; margin-bottom:14px;">
-        Download staff template
-      </button>
-      <br>
-      <input type="file" id="staff-csv-input" accept=".csv" style="margin-bottom:14px;">
-      <br>
-      <button id="staff-import-btn" style="padding:10px 18px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer;">
-        Import Staff CSV
-      </button>
-      <div id="staff-import-status" style="margin-top:12px; font-size:0.85rem;"></div>
     </div>
   `;
 
