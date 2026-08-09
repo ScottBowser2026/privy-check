@@ -869,7 +869,108 @@ const FIXTURE_CHECKS = [
   { key: "floor", label: "Floor Conditions", options: ["Clean", "Needs Attention", "Wet / Hazard"] }
 ];
 
-// ===================== ATTENDANT: UNITS LANDING (mobile-first, tap a location to act on it) =====================
+// ===================== LOCATION SCAN-TO-REPORT (proves the attendant is physically on-site) =====================
+function locationScanCode(site, groupKey) {
+  return `PRIVYCHECK::${site}::${groupKey}`;
+}
+
+function renderLocationScanGate(container, site, groupKey, groupName, onVerified) {
+  const expectedCode = locationScanCode(site, groupKey);
+  container.innerHTML = `
+    <div class="card">
+      <h4 style="color:var(--navy); margin-bottom:8px;">Scan the code posted at ${groupName}</h4>
+      <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">This confirms you're physically at this location before submitting a report.</p>
+      <button id="start-scan-btn" style="padding:10px 20px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer; font-weight:600; margin-bottom:12px;">
+        Scan Location Code
+      </button>
+      <div id="qr-reader" style="width:100%; max-width:320px; border-radius:8px; overflow:hidden;"></div>
+      <div id="scan-status" style="margin-top:10px; font-size:0.85rem;"></div>
+      <details style="margin-top:16px;">
+        <summary style="cursor:pointer; font-size:0.8rem; color:var(--muted);">Camera not working? Enter the code manually.</summary>
+        <div style="margin-top:10px;">
+          <input type="text" id="manual-scan-input" placeholder="Code printed under the QR" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; margin-bottom:8px;">
+          <button id="manual-scan-btn" style="padding:8px 16px; background:none; border:1px solid var(--navy); color:var(--navy); border-radius:6px; cursor:pointer;">Confirm</button>
+        </div>
+      </details>
+    </div>
+  `;
+
+  const statusEl = document.getElementById("scan-status");
+  let scanner = null;
+
+  function handleResult(decoded) {
+    if (decoded.trim() === expectedCode) {
+      statusEl.style.color = "var(--success)";
+      statusEl.textContent = "Location confirmed.";
+      if (scanner) scanner.stop().catch(() => {});
+      setTimeout(() => onVerified(), 400);
+    } else {
+      statusEl.style.color = "var(--danger)";
+      statusEl.textContent = "That code doesn't match this location. Make sure you're scanning the code posted here.";
+    }
+  }
+
+  document.getElementById("start-scan-btn").addEventListener("click", () => {
+    if (typeof Html5Qrcode === "undefined") {
+      statusEl.style.color = "var(--danger)";
+      statusEl.textContent = "Camera scanner failed to load. Use manual entry below.";
+      return;
+    }
+    scanner = new Html5Qrcode("qr-reader");
+    statusEl.style.color = "var(--muted)";
+    statusEl.textContent = "Requesting camera access...";
+    scanner.start(
+      { facingMode: "environment" },
+      { fps: 10, qrbox: 220 },
+      (decodedText) => handleResult(decodedText),
+      () => {}
+    ).catch((err) => {
+      statusEl.style.color = "var(--danger)";
+      statusEl.textContent = "Couldn't access camera: " + err + ". Use manual entry below.";
+    });
+  });
+
+  document.getElementById("manual-scan-btn").addEventListener("click", () => {
+    const val = document.getElementById("manual-scan-input").value;
+    if (!val.trim()) return;
+    handleResult(val);
+  });
+}
+
+// Admin utility: print QR codes for each location so they can be posted on-site.
+function renderLocationQRCodes(content, site) {
+  content.innerHTML = `<div class="card"><p style="color:var(--muted);">Loading locations...</p></div>`;
+  getLocationGroups(site).then((groups) => {
+    const groupKeys = Object.keys(groups);
+    if (!groupKeys.length) {
+      content.innerHTML = `<div class="panel-placeholder">No units imported for ${SITES[site]} yet.</div>`;
+      return;
+    }
+    content.innerHTML = `
+      <div class="card" style="margin-bottom:14px;">
+        <h3 style="color:var(--navy); margin-bottom:8px;">Location codes — ${SITES[site]}</h3>
+        <p style="color:var(--muted); font-size:0.85rem; margin-bottom:10px;">Print and post one code at each physical location. Attendants scan it before submitting a status report there.</p>
+        <button id="print-qr-btn" style="padding:8px 16px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer;">Print all codes</button>
+      </div>
+      <div id="qr-print-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(200px, 1fr)); gap:16px;"></div>
+    `;
+    const grid = document.getElementById("qr-print-grid");
+    groupKeys.forEach((groupKey) => {
+      const cell = document.createElement("div");
+      cell.className = "card";
+      cell.style.textAlign = "center";
+      cell.innerHTML = `<canvas id="qr-canvas-${groupKey}" style="max-width:100%;"></canvas><div style="font-weight:700; margin-top:8px;">${groups[groupKey].name}</div>`;
+      grid.appendChild(cell);
+      const canvas = cell.querySelector("canvas");
+      if (typeof QRCode !== "undefined") {
+        QRCode.toCanvas(canvas, locationScanCode(site, groupKey), { width: 180 }, () => {});
+      }
+    });
+    document.getElementById("print-qr-btn").addEventListener("click", () => window.print());
+  });
+}
+
+
 function renderAttendantGroupsLanding(content) {
   const site = currentUser.site;
   content.innerHTML = `<div class="card"><p style="color:var(--muted);">Loading your assigned units...</p></div>`;
@@ -953,16 +1054,16 @@ function renderAttendantGroupDetail(site, groupKey, group) {
     el.addEventListener("click", () => {
       actionGrid.querySelectorAll(".landing-tile").forEach(t => t.style.outline = "none");
       el.style.outline = "2px solid var(--gold)";
-      if (a.id === "report") renderGroupStatusReportForm(actionContent, site, groupKey, group);
+      if (a.id === "report") renderLocationScanGate(actionContent, site, groupKey, group.name, () => renderGroupStatusReportForm(actionContent, site, groupKey, group));
       if (a.id === "flag") renderFlagUnitForm(actionContent, groupKey);
       if (a.id === "supplies") renderRequestItemPicker(site, groupKey, group.name, actionContent);
     });
     actionGrid.appendChild(el);
   });
 
-  // Default to the status report view
+  // Default to the status report view (still requires a location scan)
   actionGrid.children[0].style.outline = "2px solid var(--gold)";
-  renderGroupStatusReportForm(actionContent, site, groupKey, group);
+  renderLocationScanGate(actionContent, site, groupKey, group.name, () => renderGroupStatusReportForm(actionContent, site, groupKey, group));
 }
 
 // Single-location version of the status report — same fields as the original
@@ -3004,6 +3105,21 @@ function renderAdminPanel(content) {
 
   content.innerHTML = sandboxCard + `
     <div class="card">
+      <h3 style="color:var(--navy); margin-bottom:14px;">Location QR Codes</h3>
+      <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">
+        Print a code for each location and post it on-site. Attendants scan it to prove they're physically there before submitting a status report.
+      </p>
+      <label style="display:block; font-size:0.85rem; color:var(--muted); margin-bottom:6px;">Site</label>
+      <select id="qr-site-select" style="padding:8px; border-radius:6px; border:1px solid var(--border); margin-bottom:14px; width:200px;">
+        ${siteOptions}
+      </select>
+      <br>
+      <button id="view-qr-codes-btn" style="padding:10px 18px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer;">
+        View / Print Codes
+      </button>
+      <div id="qr-codes-panel" style="margin-top:16px;"></div>
+    </div>
+    <div class="card">
       <h3 style="color:var(--navy); margin-bottom:14px;">Import Privy Units (CSV)</h3>
       <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">
         CSV columns required: <code>unit_name, location, type</code> (type must be Male, Female, or ADA).
@@ -3313,6 +3429,10 @@ function renderAdminPanel(content) {
           statusEl.textContent = "Failed to add: " + err.message;
         });
     });
+  });
+
+  document.getElementById("view-qr-codes-btn").addEventListener("click", () => {
+    renderLocationQRCodes(document.getElementById("qr-codes-panel"), document.getElementById("qr-site-select").value);
   });
 
   document.getElementById("csv-template-btn").addEventListener("click", () => {
