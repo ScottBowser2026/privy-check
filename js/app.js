@@ -3397,31 +3397,6 @@ function renderAdminPanel(content) {
 
   content.innerHTML = sandboxCard + `
     <div class="card">
-      <h3 style="color:var(--navy); margin-bottom:14px;">Location Barcode</h3>
-      <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">
-        Pick a site and location to get its code. Post the printed code on-site \u2014 attendants and Maintenance scan it to confirm they're there.
-      </p>
-      <div style="display:flex; gap:12px; flex-wrap:wrap; margin-bottom:14px;">
-        <div>
-          <label style="display:block; font-size:0.8rem; color:var(--muted); margin-bottom:4px;">Site</label>
-          <select id="barcode-site-select" style="padding:8px; border-radius:6px; border:1px solid var(--border); width:160px;">
-            ${siteOptions}
-          </select>
-        </div>
-        <div>
-          <label style="display:block; font-size:0.8rem; color:var(--muted); margin-bottom:4px;">Location</label>
-          <select id="barcode-location-select" style="padding:8px; border-radius:6px; border:1px solid var(--border); width:220px;">
-            <option>Loading...</option>
-          </select>
-        </div>
-      </div>
-      <div style="display:flex; gap:8px; margin-bottom:14px;">
-        <button id="barcode-mode-view" class="barcode-mode-btn" style="padding:8px 16px; background:var(--navy); color:white; border:none; border-radius:6px 0 0 6px; cursor:pointer;">View / Print Code</button>
-        <button id="barcode-mode-test" class="barcode-mode-btn" style="padding:8px 16px; background:var(--card); color:var(--navy); border:1px solid var(--navy); border-radius:0 6px 6px 0; cursor:pointer;">Test Scan</button>
-      </div>
-      <div id="barcode-panel"></div>
-    </div>
-    <div class="card">
       <h3 style="color:var(--navy); margin-bottom:14px;">Locations — ${SITES[currentUser.site] || ""}</h3>
       <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">
         Add locations one at a time, or import a CSV (columns: <code>unit_name, location, type</code> \u2014 type must be Male, Female, or ADA). Importing <strong>replaces all locations</strong> for the selected site.
@@ -3737,70 +3712,6 @@ function renderAdminPanel(content) {
         });
     });
   });
-
-  // ===== Location Barcode widget: pick site/location, toggle View/Print vs Test Scan =====
-  const barcodeSiteSelect = document.getElementById("barcode-site-select");
-  const barcodeLocationSelect = document.getElementById("barcode-location-select");
-  const barcodePanel = document.getElementById("barcode-panel");
-  const modeViewBtn = document.getElementById("barcode-mode-view");
-  const modeTestBtn = document.getElementById("barcode-mode-test");
-  let barcodeMode = "view";
-
-  function setBarcodeMode(mode) {
-    barcodeMode = mode;
-    modeViewBtn.style.background = mode === "view" ? "var(--navy)" : "var(--card)";
-    modeViewBtn.style.color = mode === "view" ? "white" : "var(--navy)";
-    modeTestBtn.style.background = mode === "test" ? "var(--navy)" : "var(--card)";
-    modeTestBtn.style.color = mode === "test" ? "white" : "var(--navy)";
-    renderBarcodePanel();
-  }
-
-  function renderBarcodePanel() {
-    const site = barcodeSiteSelect.value;
-    const groupKey = barcodeLocationSelect.value;
-    const locationName = barcodeLocationSelect.options[barcodeLocationSelect.selectedIndex]
-      ? barcodeLocationSelect.options[barcodeLocationSelect.selectedIndex].text
-      : "";
-    if (!groupKey) {
-      barcodePanel.innerHTML = `<div class="panel-placeholder">No locations for this site yet.</div>`;
-      return;
-    }
-    if (barcodeMode === "view") {
-      barcodePanel.innerHTML = `
-        <div style="text-align:center; padding:16px;">
-          <canvas id="barcode-view-canvas"></canvas>
-          <div style="font-weight:700; margin-top:10px;">${locationName}</div>
-          <button id="barcode-print-btn" style="margin-top:12px; padding:8px 16px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer;">Print</button>
-        </div>
-      `;
-      if (typeof QRCode !== "undefined") {
-        QRCode.toCanvas(document.getElementById("barcode-view-canvas"), locationScanCode(site, groupKey), { width: 240 }, () => {});
-      }
-      document.getElementById("barcode-print-btn").addEventListener("click", () => window.print());
-    } else {
-      renderLocationScanGate(barcodePanel, site, groupKey, locationName, () => {
-        barcodePanel.innerHTML = `<div class="panel-placeholder" style="color:var(--success); border-color:var(--success);">Scan matched ${locationName}.</div>`;
-      });
-    }
-  }
-
-  function loadBarcodeLocations() {
-    barcodeLocationSelect.innerHTML = `<option>Loading...</option>`;
-    getLocationGroups(barcodeSiteSelect.value).then((groups) => {
-      const groupKeys = Object.keys(groups);
-      barcodeLocationSelect.innerHTML = groupKeys.length
-        ? groupKeys.map(key => `<option value="${key}">${groups[key].name}</option>`).join("")
-        : `<option value="">No locations</option>`;
-      renderBarcodePanel();
-    });
-  }
-
-  barcodeSiteSelect.addEventListener("change", loadBarcodeLocations);
-  barcodeLocationSelect.addEventListener("change", renderBarcodePanel);
-  modeViewBtn.addEventListener("click", () => setBarcodeMode("view"));
-  modeTestBtn.addEventListener("click", () => setBarcodeMode("test"));
-  barcodeMode = "view";
-  loadBarcodeLocations();
 
   document.getElementById("csv-template-btn").addEventListener("click", () => {
     const site = siteSelect.value;
@@ -4405,17 +4316,25 @@ function loadUnitsTable(site) {
       return;
     }
     const units = snap.val();
-    const rows = Object.entries(units).map(([key, u]) =>
-      `<tr>
+    const rows = Object.entries(units).map(([key, u]) => {
+      const groupKey = u.name.trim().replace(/[.#$/\[\]]/g, "_");
+      return `<tr>
         <td style="padding:8px; border-bottom:1px solid var(--border);">${u.name}</td>
         <td style="padding:8px; border-bottom:1px solid var(--border);">${u.location || "—"}</td>
         <td style="padding:8px; border-bottom:1px solid var(--border);">${u.type}</td>
         <td style="padding:8px; border-bottom:1px solid var(--border);">${u.status}</td>
         <td style="padding:8px; border-bottom:1px solid var(--border);">
+          <button class="show-barcode-btn" data-group-key="${groupKey}" data-name="${u.name}" style="padding:4px 10px; background:none; border:1px solid var(--navy); color:var(--navy); border-radius:4px; cursor:pointer; font-size:0.75rem; margin-right:6px;">Barcode</button>
           <button class="delete-unit-btn" data-key="${key}" data-name="${u.name} (${u.type})" style="padding:4px 10px; background:none; border:1px solid var(--danger); color:var(--danger); border-radius:4px; cursor:pointer; font-size:0.75rem;">Remove</button>
         </td>
-      </tr>`
-    ).join("");
+      </tr>
+      <tr class="barcode-row" data-group-key="${groupKey}" style="display:none;">
+        <td colspan="5" style="padding:12px; border-bottom:1px solid var(--border); text-align:center;">
+          <canvas id="barcode-canvas-${groupKey}"></canvas>
+          <div><button class="print-barcode-btn" style="margin-top:8px; padding:6px 14px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer; font-size:0.75rem;">Print</button></div>
+        </td>
+      </tr>`;
+    }).join("");
 
     container.innerHTML = `
       <table style="width:100%; border-collapse:collapse; font-size:0.85rem;">
@@ -4439,6 +4358,22 @@ function loadUnitsTable(site) {
           .then(() => loadUnitsTable(site))
           .catch((err) => alert("Failed to remove: " + err.message));
       });
+    });
+
+    container.querySelectorAll(".show-barcode-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const groupKey = btn.dataset.groupKey;
+        const row = container.querySelector(`.barcode-row[data-group-key="${groupKey}"]`);
+        const isHidden = row.style.display === "none";
+        row.style.display = isHidden ? "table-row" : "none";
+        if (isHidden && typeof QRCode !== "undefined") {
+          QRCode.toCanvas(document.getElementById(`barcode-canvas-${groupKey}`), locationScanCode(site, groupKey), { width: 200 }, () => {});
+        }
+      });
+    });
+
+    container.querySelectorAll(".print-barcode-btn").forEach((btn) => {
+      btn.addEventListener("click", () => window.print());
     });
   });
 }
