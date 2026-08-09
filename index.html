@@ -161,6 +161,34 @@
     font-weight: 600;
   }
   main.content { padding: 24px; max-width: 1100px; margin: 0 auto; }
+  .landing-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(140px, 1fr));
+    gap: 14px;
+    max-width: 520px;
+  }
+  .landing-tile {
+    border-radius: 12px;
+    padding: 24px 18px;
+    text-align: center;
+    cursor: pointer;
+    transition: transform 0.1s ease;
+  }
+  .landing-tile:active { transform: scale(0.98); }
+  .event-stats-row {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(100px, 1fr));
+    gap: 12px;
+    max-width: 700px;
+  }
+  .event-stat-card {
+    border-radius: 10px;
+    padding: 16px;
+    text-align: center;
+  }
+  @media (max-width: 600px) {
+    .event-stats-row { grid-template-columns: repeat(2, minmax(100px, 1fr)); }
+  }
   .panel-placeholder {
     background: var(--card);
     border: 1px dashed var(--border);
@@ -288,6 +316,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@3/dist/email.min.js"></script>
-<script src="js/app.js?v=46"></script>
+<script src="js/app.js?v=47"></script>
 </body>
 </html>

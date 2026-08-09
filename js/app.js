@@ -414,6 +414,14 @@ function renderTabsForRoles(roleKeys) {
   const tabsEl = document.getElementById("main-tabs");
   tabsEl.innerHTML = "";
 
+  // Super User / Superadmin get the 4-button landing screen instead of a flat tab bar.
+  if (roleKeys.includes("superuser") || roleKeys.includes("superadmin")) {
+    tabsEl.style.display = "none";
+    renderSuperUserLanding();
+    return;
+  }
+  tabsEl.style.display = "";
+
   const seen = new Set();
   const tabs = [];
   roleKeys.forEach((role) => {
@@ -441,8 +449,222 @@ function renderTabsForRoles(roleKeys) {
   if (tabs.length) renderTabContent(tabs[0].id);
 }
 
-function renderTabContent(tabId) {
+// ===================== SUPER USER / SUPERADMIN: LANDING + DRILL-DOWN NAV =====================
+// Stage 1 of the redesigned Super User experience: a 4-button home screen
+// (Admin Panel / Event / Inventory / Reports), with Event opening into a
+// 10,000ft stat view plus its own 4-button drill-down.
+
+const LANDING_TILES = [
+  { id: "admin-panel", label: "Admin panel", sub: "Pre-event setup", icon: "⚙️", color: "pro" },
+  { id: "event", label: "Event", sub: "", icon: "⚠️", color: "danger" },
+  { id: "inventory", label: "Inventory", sub: "", icon: "📦", color: "warn" },
+  { id: "reports", label: "Reports", sub: "Daily archive", icon: "📄", color: "accent" }
+];
+
+function landingTileColors(color) {
+  return {
+    pro: { bg: "#efe9fb", text: "#5b3ea6" },
+    danger: { bg: "#fbe9e7", text: "var(--danger)" },
+    warn: { bg: "#fbf1e0", text: "var(--warn)" },
+    accent: { bg: "#e6f0fb", text: "#2c5f8a" }
+  }[color];
+}
+
+function currentSuperUserSites() {
+  const topSelector = document.getElementById("site-selector");
+  if (hasRole(currentUser, "superadmin")) {
+    const val = topSelector ? topSelector.value : "all";
+    return val === "all" ? Object.keys(SITES) : [val];
+  }
+  return [currentUser.site];
+}
+
+function renderSuperUserLanding() {
   const content = document.getElementById("main-content");
+  detachSupplyRequestsListener();
+
+  content.innerHTML = `<div class="landing-grid" id="su-landing-grid"></div>`;
+  const grid = document.getElementById("su-landing-grid");
+
+  Promise.all([
+    computeOpenFlagsCount(currentSuperUserSites()),
+    computeItemsBelowParCount(currentSuperUserSites())
+  ]).then(([openFlags, belowPar]) => {
+    LANDING_TILES.forEach((tile) => {
+      const c = landingTileColors(tile.color);
+      let sub = tile.sub;
+      if (tile.id === "event") sub = `${openFlags} open flag${openFlags === 1 ? "" : "s"}`;
+      if (tile.id === "inventory") sub = `${belowPar} item${belowPar === 1 ? "" : "s"} below par`;
+
+      const el = document.createElement("div");
+      el.className = "landing-tile";
+      el.style.background = c.bg;
+      el.style.color = c.text;
+      el.innerHTML = `
+        <div style="font-size:1.8rem;">${tile.icon}</div>
+        <div style="font-weight:700; margin-top:10px; font-size:0.95rem;">${tile.label}</div>
+        <div style="font-size:0.8rem; margin-top:2px; opacity:0.85;">${sub}</div>
+      `;
+      el.addEventListener("click", () => openSuperUserSection(tile.id));
+      grid.appendChild(el);
+    });
+  });
+}
+
+function backToLandingButton() {
+  return `<button class="back-to-landing-btn" style="background:none; border:none; color:var(--muted); cursor:pointer; font-size:0.85rem; margin-bottom:14px; padding:0;">&larr; Back</button>`;
+}
+
+function attachBackToLanding(content) {
+  const btn = content.querySelector(".back-to-landing-btn");
+  if (btn) btn.addEventListener("click", renderSuperUserLanding);
+}
+
+function openSuperUserSection(sectionId) {
+  if (sectionId === "admin-panel") return renderAdminPanelSection();
+  if (sectionId === "event") return renderEventOverviewSection();
+  if (sectionId === "inventory") return renderInventorySection();
+  if (sectionId === "reports") return renderReportsSection();
+}
+
+function computeOpenFlagsCount(sites) {
+  return Promise.all(sites.map(site => db.ref(`sites/${site}/outOfOrder`).once("value"))).then((snaps) => {
+    let count = 0;
+    snaps.forEach((snap) => {
+      if (snap.exists()) snap.forEach((child) => { if (child.val().status !== "closed") count++; });
+    });
+    return count;
+  });
+}
+
+function computeMedicalAlertsTodayCount(sites) {
+  const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
+  return Promise.all(sites.map(site => db.ref(`sites/${site}/medicalAlerts`).once("value"))).then((snaps) => {
+    let count = 0;
+    snaps.forEach((snap) => {
+      if (snap.exists()) snap.forEach((child) => { if ((child.val().timestamp || 0) >= startOfDay.getTime()) count++; });
+    });
+    return count;
+  });
+}
+
+function computeAttendantsOnShiftCount(sites) {
+  return db.ref("users").once("value").then((usersSnap) => {
+    let count = 0;
+    if (usersSnap.exists()) {
+      usersSnap.forEach((child) => {
+        const u = child.val();
+        if ((hasRole(u, "user") || hasRole(u, "superuser")) && sites.includes(u.site) && u.active !== false) count++;
+      });
+    }
+    return count;
+  });
+}
+
+function computeItemsBelowParCount(sites) {
+  // Placeholder proxy until the full inventory-vs-par comparison is wired up in a later stage.
+  return Promise.resolve(0);
+}
+
+function renderEventOverviewSection() {
+  const content = document.getElementById("main-content");
+  detachSupplyRequestsListener();
+  content.innerHTML = backToLandingButton() + `<div id="event-stats-row" class="event-stats-row"></div><div class="landing-grid" id="event-subnav-grid" style="margin-top:20px;"></div>`;
+  attachBackToLanding(content);
+
+  const sites = currentSuperUserSites();
+  Promise.all([
+    computeOpenFlagsCount(sites),
+    computeMedicalAlertsTodayCount(sites),
+    computeAttendantsOnShiftCount(sites)
+  ]).then(([openFlags, medicalToday, attendants]) => {
+    const statsRow = document.getElementById("event-stats-row");
+    statsRow.innerHTML = [
+      { label: "Open flags", value: openFlags, bg: "#e6f6ea", text: "var(--success)" },
+      { label: "Overdue reports", value: 0, bg: "#fbe9e7", text: "var(--danger)" },
+      { label: "Attendants on shift", value: attendants, bg: "#e6f0fb", text: "#2c5f8a" },
+      { label: "Medical alerts today", value: medicalToday, bg: "#efe9fb", text: "#5b3ea6" }
+    ].map(s => `
+      <div class="event-stat-card" style="background:${s.bg}; color:${s.text};">
+        <div style="font-size:0.75rem; opacity:0.85;">${s.label}</div>
+        <div style="font-size:1.5rem; font-weight:700; margin-top:4px;">${s.value}</div>
+      </div>
+    `).join("");
+
+    const subnavGrid = document.getElementById("event-subnav-grid");
+    const subTiles = [
+      { id: "during-event", label: "Status reports", icon: "📋", bg: "#e6f0fb", text: "#2c5f8a" },
+      { id: "oor-manage", label: "Out of order", icon: "🔧", bg: "#fbe9e7", text: "var(--danger)", badge: openFlags },
+      { id: "medical-alerts", label: "Medical alerts", icon: "🩹", bg: "#fbf1e0", text: "var(--warn)" },
+      { id: "closing-history", label: "Closing", icon: "📝", bg: "#efe9fb", text: "#5b3ea6" }
+    ];
+    subTiles.forEach((t) => {
+      const el = document.createElement("div");
+      el.className = "landing-tile";
+      el.style.background = t.bg;
+      el.style.color = t.text;
+      el.style.position = "relative";
+      el.innerHTML = `
+        ${t.badge ? `<span style="position:absolute; top:10px; right:10px; font-size:0.7rem; background:var(--danger); color:white; border-radius:10px; padding:2px 7px;">${t.badge}</span>` : ""}
+        <div style="font-size:1.6rem;">${t.icon}</div>
+        <div style="font-weight:700; margin-top:8px; font-size:0.9rem;">${t.label}</div>
+      `;
+      el.addEventListener("click", () => renderEventSubSection(t.id));
+      subnavGrid.appendChild(el);
+    });
+  });
+}
+
+function renderEventSubSection(tabId) {
+  const content = document.getElementById("main-content");
+  content.innerHTML = `<button class="back-to-event-btn" style="background:none; border:none; color:var(--muted); cursor:pointer; font-size:0.85rem; margin-bottom:14px; padding:0;">&larr; Back to Event</button><div id="event-sub-content"></div>`;
+  content.querySelector(".back-to-event-btn").addEventListener("click", renderEventOverviewSection);
+  renderTabContent(tabId, document.getElementById("event-sub-content"));
+}
+
+function renderAdminPanelSection() {
+  const content = document.getElementById("main-content");
+  content.innerHTML = backToLandingButton() + `<div class="landing-grid" id="admin-subnav-grid"></div>`;
+  attachBackToLanding(content);
+  const grid = document.getElementById("admin-subnav-grid");
+  [
+    { id: "pre-event-admin", label: "Pre-event setup", icon: "🗂️", bg: "#efe9fb", text: "#5b3ea6" },
+    { id: "admin", label: "Staff & units", icon: "👥", bg: "#e6f0fb", text: "#2c5f8a" }
+  ].forEach((t) => {
+    const el = document.createElement("div");
+    el.className = "landing-tile";
+    el.style.background = t.bg;
+    el.style.color = t.text;
+    el.innerHTML = `<div style="font-size:1.6rem;">${t.icon}</div><div style="font-weight:700; margin-top:8px; font-size:0.9rem;">${t.label}</div>`;
+    el.addEventListener("click", () => {
+      content.innerHTML = `<button class="back-to-admin-btn" style="background:none; border:none; color:var(--muted); cursor:pointer; font-size:0.85rem; margin-bottom:14px; padding:0;">&larr; Back to Admin panel</button><div id="admin-sub-content"></div>`;
+      content.querySelector(".back-to-admin-btn").addEventListener("click", renderAdminPanelSection);
+      renderTabContent(t.id, document.getElementById("admin-sub-content"));
+    });
+    grid.appendChild(el);
+  });
+}
+
+function renderInventorySection() {
+  const content = document.getElementById("main-content");
+  content.innerHTML = backToLandingButton() + `<div id="inventory-sub-content"></div>`;
+  attachBackToLanding(content);
+  renderInventoryOrders(document.getElementById("inventory-sub-content"));
+}
+
+function renderReportsSection() {
+  const content = document.getElementById("main-content");
+  content.innerHTML = backToLandingButton() + `
+    <div class="panel-placeholder">
+      Daily PDF report archive is coming in a later build stage.<br>
+      <span style="font-size:0.8rem;">Once wired up, closing reports will generate as PDFs and save here for download — no Teams post, no delete for Super User.</span>
+    </div>
+  `;
+  attachBackToLanding(content);
+}
+
+function renderTabContent(tabId, targetEl) {
+  const content = targetEl || document.getElementById("main-content");
   detachSupplyRequestsListener(); // stop any live listener from the tab we're leaving
 
   if (tabId === "admin") {
