@@ -3474,6 +3474,28 @@ function renderAdminPanel(content) {
       </div>
     </div>
     <div class="card">
+      <h3 style="color:var(--navy); margin-bottom:14px;">Import Order Guide (XLSX)</h3>
+      <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">
+        Upload a spreadsheet in the standard Order Guide format (one sheet per location, "Womens"/"Mens" sections listing item name and Par). You'll map each sheet to an existing location group before anything is saved — sheet names don't have to match exactly.
+      </p>
+      <input type="file" id="order-guide-file-input" accept=".xlsx,.xls" style="margin-bottom:14px;">
+      <br>
+      <button id="order-guide-parse-btn" style="padding:10px 18px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer;">
+        Parse File
+      </button>
+      <div id="order-guide-status" style="margin-top:12px; font-size:0.85rem;"></div>
+      <div id="order-guide-mapping-content"></div>
+    </div>
+    <div class="card">
+      <h3 style="color:var(--navy); margin-bottom:14px;">Staff — <span id="staff-table-site-label"></span></h3>
+      <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">
+        Toggle "MOD" (Manager/Maintenance on Duty) for Super Users and Maintenance staff who are currently on shift and should receive alerts / be assignable. Multiple people can be MOD at once.
+      </p>
+      <div id="staff-table-container">
+        <p style="color:var(--muted);">Select a site above to view staff.</p>
+      </div>
+    </div>
+    <div class="card">
       <h3 style="color:var(--navy); margin-bottom:14px;">Add Staff Member</h3>
       <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-bottom:12px;">
         <div>
@@ -3518,28 +3540,6 @@ function renderAdminPanel(content) {
         Add Staff Member
       </button>
       <div id="add-staff-status" style="margin-top:12px; font-size:0.85rem;"></div>
-    </div>
-    <div class="card">
-      <h3 style="color:var(--navy); margin-bottom:14px;">Import Order Guide (XLSX)</h3>
-      <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">
-        Upload a spreadsheet in the standard Order Guide format (one sheet per location, "Womens"/"Mens" sections listing item name and Par). You'll map each sheet to an existing location group before anything is saved — sheet names don't have to match exactly.
-      </p>
-      <input type="file" id="order-guide-file-input" accept=".xlsx,.xls" style="margin-bottom:14px;">
-      <br>
-      <button id="order-guide-parse-btn" style="padding:10px 18px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer;">
-        Parse File
-      </button>
-      <div id="order-guide-status" style="margin-top:12px; font-size:0.85rem;"></div>
-      <div id="order-guide-mapping-content"></div>
-    </div>
-    <div class="card">
-      <h3 style="color:var(--navy); margin-bottom:14px;">Staff — <span id="staff-table-site-label"></span></h3>
-      <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">
-        Toggle "MOD" (Manager/Maintenance on Duty) for Super Users and Maintenance staff who are currently on shift and should receive alerts / be assignable. Multiple people can be MOD at once.
-      </p>
-      <div id="staff-table-container">
-        <p style="color:var(--muted);">Select a site above to view staff.</p>
-      </div>
     </div>
     <div class="card">
       <h3 style="color:var(--navy); margin-bottom:14px;">Import Staff (CSV)</h3>
