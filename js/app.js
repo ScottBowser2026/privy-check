@@ -540,11 +540,14 @@ function computeOpenFlagsCount(sites) {
 function computeMedicalAlertsTodayCount(sites) {
   const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
   return Promise.all(sites.map(site => db.ref(`sites/${site}/medicalAlerts`).once("value"))).then((snaps) => {
-    let count = 0;
+    let active = 0;
     snaps.forEach((snap) => {
-      if (snap.exists()) snap.forEach((child) => { if ((child.val().timestamp || 0) >= startOfDay.getTime()) count++; });
+      if (snap.exists()) snap.forEach((child) => {
+        const a = child.val();
+        if ((a.timestamp || 0) >= startOfDay.getTime() && a.status !== "cleared") active++;
+      });
     });
-    return count;
+    return active;
   });
 }
 
@@ -1297,6 +1300,8 @@ function renderMedicalAlertsHistory(content) {
 
   content.innerHTML = `<div class="card"><p style="color:var(--muted);">Loading...</p></div>`;
 
+  const canClear = hasRole(currentUser, "security") || hasRole(currentUser, "superadmin") || hasRole(currentUser, "superuser");
+
   db.ref(`sites/${site}/medicalAlerts`).limitToLast(20).once("value").then((snap) => {
     if (!snap.exists()) {
       content.innerHTML = `<div class="panel-placeholder">No medical alerts logged for ${SITES[site]}.</div>`;
@@ -1304,21 +1309,55 @@ function renderMedicalAlertsHistory(content) {
     }
 
     const alerts = [];
-    snap.forEach((child) => alerts.push(child.val()));
+    snap.forEach((child) => alerts.push({ key: child.key, ...child.val() }));
     alerts.reverse();
 
     const cardsHtml = alerts.map((a) => {
       const when = a.timestamp ? new Date(a.timestamp).toLocaleString() : "—";
+      const isCleared = a.status === "cleared";
+      const clearedWhen = a.clearedAt ? new Date(a.clearedAt).toLocaleString() : "";
+
       return `
-        <div class="card" style="margin-bottom:10px; border-left:4px solid var(--danger);">
-          <div style="font-weight:700; color:var(--danger);">🚨 ${a.locationName}</div>
-          <div style="color:var(--muted); font-size:0.85rem; margin-top:4px;">Reported by ${a.triggeredByName}</div>
-          <div style="color:var(--muted); font-size:0.75rem;">${when}</div>
+        <div class="card" style="margin-bottom:10px; border-left:4px solid ${isCleared ? "var(--success)" : "var(--danger)"};">
+          <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px;">
+            <div>
+              <div style="font-weight:700; color:${isCleared ? "var(--success)" : "var(--danger)"};">🚨 ${a.locationName}</div>
+              <div style="color:var(--muted); font-size:0.85rem; margin-top:4px;">Reported by ${a.triggeredByName}</div>
+              <div style="color:var(--muted); font-size:0.75rem;">${when}</div>
+              ${isCleared ? `<div style="color:var(--success); font-size:0.75rem; margin-top:4px;">Cleared by ${a.clearedByName} · ${clearedWhen}</div>` : ""}
+            </div>
+            <div style="text-align:right;">
+              <span style="font-size:0.75rem; font-weight:600; padding:3px 10px; border-radius:10px; background:${isCleared ? "#e6f6ea" : "#fbe9e7"}; color:${isCleared ? "var(--success)" : "var(--danger)"};">
+                ${isCleared ? "Cleared" : "Active"}
+              </span>
+              ${!isCleared && canClear ? `<button class="clear-medical-alert-btn" data-key="${a.key}" style="display:block; margin-top:8px; padding:6px 12px; background:var(--success); color:white; border:none; border-radius:6px; cursor:pointer; font-size:0.75rem;">Clear</button>` : ""}
+            </div>
+          </div>
         </div>
       `;
     }).join("");
 
     content.innerHTML = `<h3 style="color:var(--navy); margin-bottom:14px;">Medical Alerts — ${SITES[site]}</h3>` + cardsHtml;
+
+    content.querySelectorAll(".clear-medical-alert-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const key = btn.dataset.key;
+        btn.disabled = true;
+        btn.textContent = "Clearing...";
+        db.ref(`sites/${site}/medicalAlerts/${key}`).update({
+          status: "cleared",
+          clearedByUid: currentUser.uid,
+          clearedByName: `${currentUser.firstName} ${currentUser.lastName}`,
+          clearedAt: firebase.database.ServerValue.TIMESTAMP
+        }).then(() => {
+          renderMedicalAlertsHistory(content);
+        }).catch((err) => {
+          alert("Failed to clear alert: " + err.message);
+          btn.disabled = false;
+          btn.textContent = "Clear";
+        });
+      });
+    });
   });
 }
 
