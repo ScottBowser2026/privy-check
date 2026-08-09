@@ -409,10 +409,7 @@ const ROLE_TABS = {
     { id: "admin", label: "Admin Panel" }
   ],
   user: [
-    { id: "during-event", label: "During Event" },
-    { id: "closing-entry", label: "Closing Count" },
-    { id: "oor-flag", label: "Flag a Unit" },
-    { id: "request-supplies", label: "Request Supplies" }
+    { id: "attendant-home", label: "Home" }
   ],
   maintenance: [
     { id: "maintenance-home", label: "Maintenance" }
@@ -761,6 +758,11 @@ function renderTabContent(tabId, targetEl) {
     return;
   }
 
+  if (tabId === "attendant-home") {
+    renderAttendantHome(content);
+    return;
+  }
+
   if (tabId === "during-event") {
     if (hasRole(currentUser, "user")) {
       renderAttendantGroupsLanding(content);
@@ -1012,6 +1014,28 @@ function showResolvedFlagNotifications(site, content) {
   });
 }
 
+// Single consolidated home screen for attendants — one tab instead of four.
+// Closing is reachable from here too, alongside the location list; Flag a
+// Unit and Request Supplies still live inside each location's detail view.
+function renderAttendantHome(content) {
+  content.innerHTML = `
+    <div class="card" id="attendant-closing-entry" style="margin-bottom:14px; cursor:pointer; display:flex; justify-content:space-between; align-items:center;">
+      <div>
+        <div style="font-weight:700; color:var(--navy);">📝 Closing Count</div>
+        <div style="color:var(--muted); font-size:0.8rem; margin-top:2px;">End-of-day photos, checklist, and inventory count</div>
+      </div>
+      <span style="color:var(--muted);">&rsaquo;</span>
+    </div>
+    <div id="attendant-locations-content"></div>
+  `;
+  document.getElementById("attendant-closing-entry").addEventListener("click", () => {
+    content.innerHTML = `<button class="back-to-attendant-home-btn" style="background:none; border:none; color:var(--muted); cursor:pointer; font-size:0.85rem; margin-bottom:14px; padding:0;">&larr; Back</button><div id="attendant-closing-content"></div>`;
+    content.querySelector(".back-to-attendant-home-btn").addEventListener("click", () => renderAttendantHome(content));
+    renderClosingEntryPanel(document.getElementById("attendant-closing-content"));
+  });
+  renderAttendantGroupsLanding(document.getElementById("attendant-locations-content"));
+}
+
 function renderAttendantGroupsLanding(content) {
   const site = currentUser.site;
   content.innerHTML = `<div class="card"><p style="color:var(--muted);">Loading your assigned units...</p></div>`;
@@ -1079,7 +1103,7 @@ function renderAttendantGroupDetail(site, groupKey, group) {
     <div class="landing-grid" id="attendant-action-grid" style="margin-bottom:20px;"></div>
     <div id="attendant-action-content"></div>
   `;
-  content.querySelector(".back-to-groups-btn").addEventListener("click", renderAttendantGroupsLanding);
+  content.querySelector(".back-to-groups-btn").addEventListener("click", () => renderAttendantHome(content));
 
   const actionGrid = document.getElementById("attendant-action-grid");
   const actionContent = document.getElementById("attendant-action-content");
