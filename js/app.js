@@ -995,14 +995,15 @@ function renderUnitQRCodes(content, site) {
 }
 
 // ===================== SUPER USER / ADMIN: SCAN LOOKUP =====================
-// Lets Super User/Superadmin scan a printed location or unit code (the same
-// codes generated in Admin Panel) to instantly pull up its status, rather
-// than hunting through lists. Live camera only, same as the attendant gates.
+// Lets Super User/Superadmin scan a printed location code to instantly pull
+// up its status, rather than hunting through lists. Live camera only, same
+// as the attendant scan gates. Location-only — unit-level scanning was too
+// granular for this lookup tool.
 function renderScanLookup(content, site) {
   content.innerHTML = `
     <div class="card">
-      <h4 style="color:var(--navy); margin-bottom:8px;">Scan a location or unit code</h4>
-      <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">Scan any printed code to jump straight to its current status.</p>
+      <h4 style="color:var(--navy); margin-bottom:8px;">Scan a location code</h4>
+      <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">Scan a printed location code to jump straight to its current status.</p>
       <button id="admin-start-scan-btn" style="padding:10px 20px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer; font-weight:600; margin-bottom:12px;">
         Scan Code
       </button>
@@ -1018,41 +1019,17 @@ function renderScanLookup(content, site) {
 
   function handleResult(decoded) {
     const text = decoded.trim();
-    const unitMatch = text.match(/^PRIVYCHECK-UNIT::([a-z]+)::(.+)$/);
     const locationMatch = text.match(/^PRIVYCHECK::([a-z]+)::(.+)$/);
 
     if (scanner) scanner.stop().catch(() => {});
 
-    if (unitMatch) {
-      const [, scannedSite, unitKey] = unitMatch;
-      lookupUnit(scannedSite, unitKey);
-    } else if (locationMatch) {
+    if (locationMatch) {
       const [, scannedSite, groupKey] = locationMatch;
       lookupLocation(scannedSite, groupKey);
     } else {
       statusEl.style.color = "var(--danger)";
-      statusEl.textContent = "That doesn't look like a Privy Check code.";
+      statusEl.textContent = "That doesn't look like a Privy Check location code.";
     }
-  }
-
-  function lookupUnit(scannedSite, unitKey) {
-    db.ref(`sites/${scannedSite}/units/${unitKey}`).once("value").then((snap) => {
-      if (!snap.exists()) {
-        statusEl.style.color = "var(--danger)";
-        statusEl.textContent = "Unit not found — it may have been removed.";
-        return;
-      }
-      const u = snap.val();
-      const isOk = u.status !== "outOfOrder";
-      statusEl.textContent = "";
-      resultEl.innerHTML = `
-        <div class="card" style="border-left:4px solid ${isOk ? "var(--success)" : "var(--danger)"};">
-          <div style="font-weight:700; color:var(--navy);">${u.name} — ${u.type}</div>
-          <div style="color:${isOk ? "var(--success)" : "var(--danger)"}; font-weight:600; margin-top:6px;">${isOk ? "OK" : "Out of Order"}</div>
-          <div style="color:var(--muted); font-size:0.8rem; margin-top:4px;">Site: ${SITES[scannedSite] || scannedSite}</div>
-        </div>
-      `;
-    });
   }
 
   function lookupLocation(scannedSite, groupKey) {
@@ -1111,6 +1088,43 @@ function renderScanLookup(content, site) {
       statusEl.style.color = "var(--danger)";
       statusEl.textContent = "Couldn't access camera: " + err;
     });
+  });
+}
+
+// Quick single-code generator for testing — pick one location, get just
+// that one code, large and on its own, instead of the full print grid.
+function renderSingleTestCode(content, site) {
+  content.innerHTML = `<div class="card"><p style="color:var(--muted);">Loading locations...</p></div>`;
+  getLocationGroups(site).then((groups) => {
+    const groupKeys = Object.keys(groups);
+    if (!groupKeys.length) {
+      content.innerHTML = `<div class="panel-placeholder">No units imported for ${SITES[site]} yet.</div>`;
+      return;
+    }
+    content.innerHTML = `
+      <div class="card">
+        <label style="display:block; font-size:0.85rem; color:var(--muted); margin-bottom:6px;">Location</label>
+        <select id="single-code-select" style="padding:8px; border-radius:6px; border:1px solid var(--border); margin-bottom:14px; width:220px;">
+          ${groupKeys.map(key => `<option value="${key}">${groups[key].name}</option>`).join("")}
+        </select>
+        <br>
+        <div style="text-align:center; padding:16px;">
+          <canvas id="single-test-qr-canvas"></canvas>
+          <div id="single-test-qr-label" style="font-weight:700; margin-top:10px;"></div>
+        </div>
+      </div>
+    `;
+    const select = document.getElementById("single-code-select");
+    function draw() {
+      const groupKey = select.value;
+      document.getElementById("single-test-qr-label").textContent = groups[groupKey].name;
+      const canvas = document.getElementById("single-test-qr-canvas");
+      if (typeof QRCode !== "undefined") {
+        QRCode.toCanvas(canvas, locationScanCode(site, groupKey), { width: 260 }, () => {});
+      }
+    }
+    select.addEventListener("change", draw);
+    draw();
   });
 }
 
@@ -3383,6 +3397,21 @@ function renderAdminPanel(content) {
 
   content.innerHTML = sandboxCard + `
     <div class="card">
+      <h3 style="color:var(--navy); margin-bottom:14px;">Single Test Code</h3>
+      <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">
+        Grab one location's code, on its own, for quick testing \u2014 no need to print the whole grid.
+      </p>
+      <label style="display:block; font-size:0.85rem; color:var(--muted); margin-bottom:6px;">Site</label>
+      <select id="single-code-site-select" style="padding:8px; border-radius:6px; border:1px solid var(--border); margin-bottom:14px; width:200px;">
+        ${siteOptions}
+      </select>
+      <br>
+      <button id="get-single-code-btn" style="padding:10px 18px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer;">
+        Get Code
+      </button>
+      <div id="single-code-panel" style="margin-top:16px;"></div>
+    </div>
+    <div class="card">
       <h3 style="color:var(--navy); margin-bottom:14px;">Scan Lookup</h3>
       <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">
         Scan any printed location or unit code to instantly check its status \u2014 no need to hunt through lists.
@@ -3737,6 +3766,10 @@ function renderAdminPanel(content) {
           statusEl.textContent = "Failed to add: " + err.message;
         });
     });
+  });
+
+  document.getElementById("get-single-code-btn").addEventListener("click", () => {
+    renderSingleTestCode(document.getElementById("single-code-panel"), document.getElementById("single-code-site-select").value);
   });
 
   document.getElementById("open-scan-lookup-btn").addEventListener("click", () => {
