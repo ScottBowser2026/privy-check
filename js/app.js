@@ -879,19 +879,12 @@ function renderLocationScanGate(container, site, groupKey, groupName, onVerified
   container.innerHTML = `
     <div class="card">
       <h4 style="color:var(--navy); margin-bottom:8px;">Scan the code posted at ${groupName}</h4>
-      <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">This confirms you're physically at this location before submitting a report.</p>
+      <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">This confirms you're physically at this location before submitting a report. Live camera scan only — there's no manual entry, so the report can't be submitted without scanning the code on-site.</p>
       <button id="start-scan-btn" style="padding:10px 20px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer; font-weight:600; margin-bottom:12px;">
         Scan Location Code
       </button>
       <div id="qr-reader" style="width:100%; max-width:320px; border-radius:8px; overflow:hidden;"></div>
       <div id="scan-status" style="margin-top:10px; font-size:0.85rem;"></div>
-      <details style="margin-top:16px;">
-        <summary style="cursor:pointer; font-size:0.8rem; color:var(--muted);">Camera not working? Enter the code manually.</summary>
-        <div style="margin-top:10px;">
-          <input type="text" id="manual-scan-input" placeholder="Code printed under the QR" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; margin-bottom:8px;">
-          <button id="manual-scan-btn" style="padding:8px 16px; background:none; border:1px solid var(--navy); color:var(--navy); border-radius:6px; cursor:pointer;">Confirm</button>
-        </div>
-      </details>
     </div>
   `;
 
@@ -913,7 +906,7 @@ function renderLocationScanGate(container, site, groupKey, groupName, onVerified
   document.getElementById("start-scan-btn").addEventListener("click", () => {
     if (typeof Html5Qrcode === "undefined") {
       statusEl.style.color = "var(--danger)";
-      statusEl.textContent = "Camera scanner failed to load. Use manual entry below.";
+      statusEl.textContent = "Camera scanner failed to load. Reload the page and try again, or ask your Super User for help.";
       return;
     }
     scanner = new Html5Qrcode("qr-reader");
@@ -926,14 +919,8 @@ function renderLocationScanGate(container, site, groupKey, groupName, onVerified
       () => {}
     ).catch((err) => {
       statusEl.style.color = "var(--danger)";
-      statusEl.textContent = "Couldn't access camera: " + err + ". Use manual entry below.";
+      statusEl.textContent = "Couldn't access camera: " + err + ". Camera access is required to submit a report — check your browser's camera permission for this site.";
     });
-  });
-
-  document.getElementById("manual-scan-btn").addEventListener("click", () => {
-    const val = document.getElementById("manual-scan-input").value;
-    if (!val.trim()) return;
-    handleResult(val);
   });
 }
 
