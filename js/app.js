@@ -258,12 +258,37 @@ function setupMedicalAlertButton() {
     locationSelect.innerHTML = `<option>Loading...</option>`;
     modal.style.display = "flex";
 
-    getLocationGroups(currentUser.site).then((groups) => {
-      const groupKeys = Object.keys(groups);
-      locationSelect.innerHTML = groupKeys.length
-        ? groupKeys.map(key => `<option value="${key}">${groups[key].name}</option>`).join("")
-        : `<option value="">No locations set up</option>`;
-    });
+    // Attendants only see their own assigned locations, so whoever's
+    // triggering this can only pick a spot they're actually near — Security
+    // gets an accurate location instead of picking from the full site list.
+    const onlyAssigned = hasRole(currentUser, "user") &&
+      !hasRole(currentUser, "superuser") && !hasRole(currentUser, "superadmin");
+
+    if (onlyAssigned) {
+      db.ref(`sites/${currentUser.site}/units`).once("value").then((snap) => {
+        const groups = {};
+        if (snap.exists()) {
+          snap.forEach((child) => {
+            const u = child.val();
+            if (u.assignedTo && u.assignedTo[currentUser.uid]) {
+              const key = u.name.trim().replace(/[.#$/\[\]]/g, "_");
+              if (!groups[key]) groups[key] = u.name.trim();
+            }
+          });
+        }
+        const groupKeys = Object.keys(groups);
+        locationSelect.innerHTML = groupKeys.length
+          ? groupKeys.map(key => `<option value="${key}">${groups[key]}</option>`).join("")
+          : `<option value="">No locations assigned to you</option>`;
+      });
+    } else {
+      getLocationGroups(currentUser.site).then((groups) => {
+        const groupKeys = Object.keys(groups);
+        locationSelect.innerHTML = groupKeys.length
+          ? groupKeys.map(key => `<option value="${key}">${groups[key].name}</option>`).join("")
+          : `<option value="">No locations set up</option>`;
+      });
+    }
   }
 
   function closeModal() {
