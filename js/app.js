@@ -3397,70 +3397,34 @@ function renderAdminPanel(content) {
 
   content.innerHTML = sandboxCard + `
     <div class="card">
-      <h3 style="color:var(--navy); margin-bottom:14px;">Single Test Code</h3>
+      <h3 style="color:var(--navy); margin-bottom:14px;">Location Barcode</h3>
       <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">
-        Grab one location's code, on its own, for quick testing \u2014 no need to print the whole grid.
+        Pick a site and location to get its code. Post the printed code on-site \u2014 attendants and Maintenance scan it to confirm they're there.
       </p>
-      <label style="display:block; font-size:0.85rem; color:var(--muted); margin-bottom:6px;">Site</label>
-      <select id="single-code-site-select" style="padding:8px; border-radius:6px; border:1px solid var(--border); margin-bottom:14px; width:200px;">
-        ${siteOptions}
-      </select>
-      <br>
-      <button id="get-single-code-btn" style="padding:10px 18px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer;">
-        Get Code
-      </button>
-      <div id="single-code-panel" style="margin-top:16px;"></div>
+      <div style="display:flex; gap:12px; flex-wrap:wrap; margin-bottom:14px;">
+        <div>
+          <label style="display:block; font-size:0.8rem; color:var(--muted); margin-bottom:4px;">Site</label>
+          <select id="barcode-site-select" style="padding:8px; border-radius:6px; border:1px solid var(--border); width:160px;">
+            ${siteOptions}
+          </select>
+        </div>
+        <div>
+          <label style="display:block; font-size:0.8rem; color:var(--muted); margin-bottom:4px;">Location</label>
+          <select id="barcode-location-select" style="padding:8px; border-radius:6px; border:1px solid var(--border); width:220px;">
+            <option>Loading...</option>
+          </select>
+        </div>
+      </div>
+      <div style="display:flex; gap:8px; margin-bottom:14px;">
+        <button id="barcode-mode-view" class="barcode-mode-btn" style="padding:8px 16px; background:var(--navy); color:white; border:none; border-radius:6px 0 0 6px; cursor:pointer;">View / Print Code</button>
+        <button id="barcode-mode-test" class="barcode-mode-btn" style="padding:8px 16px; background:var(--card); color:var(--navy); border:1px solid var(--navy); border-radius:0 6px 6px 0; cursor:pointer;">Test Scan</button>
+      </div>
+      <div id="barcode-panel"></div>
     </div>
     <div class="card">
-      <h3 style="color:var(--navy); margin-bottom:14px;">Scan Lookup</h3>
+      <h3 style="color:var(--navy); margin-bottom:14px;">Units — ${SITES[currentUser.site] || ""}</h3>
       <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">
-        Scan any printed location or unit code to instantly check its status \u2014 no need to hunt through lists.
-      </p>
-      <label style="display:block; font-size:0.85rem; color:var(--muted); margin-bottom:6px;">Site</label>
-      <select id="scan-lookup-site-select" style="padding:8px; border-radius:6px; border:1px solid var(--border); margin-bottom:14px; width:200px;">
-        ${siteOptions}
-      </select>
-      <br>
-      <button id="open-scan-lookup-btn" style="padding:10px 18px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer;">
-        Open Scanner
-      </button>
-      <div id="scan-lookup-panel" style="margin-top:16px;"></div>
-    </div>
-    <div class="card">
-      <h3 style="color:var(--navy); margin-bottom:14px;">Location QR Codes</h3>
-      <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">
-        Print a code for each location and post it on-site. Attendants scan it to prove they're physically there before submitting a status report.
-      </p>
-      <label style="display:block; font-size:0.85rem; color:var(--muted); margin-bottom:6px;">Site</label>
-      <select id="qr-site-select" style="padding:8px; border-radius:6px; border:1px solid var(--border); margin-bottom:14px; width:200px;">
-        ${siteOptions}
-      </select>
-      <br>
-      <button id="view-qr-codes-btn" style="padding:10px 18px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer;">
-        View / Print Codes
-      </button>
-      <div id="qr-codes-panel" style="margin-top:16px;"></div>
-    </div>
-    <div class="card">
-      <h3 style="color:var(--navy); margin-bottom:14px;">Unit QR Codes</h3>
-      <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">
-        A separate code for each individual unit (stall/toilet), for labeling the unit itself rather than the location as a whole.
-      </p>
-      <label style="display:block; font-size:0.85rem; color:var(--muted); margin-bottom:6px;">Site</label>
-      <select id="unit-qr-site-select" style="padding:8px; border-radius:6px; border:1px solid var(--border); margin-bottom:14px; width:200px;">
-        ${siteOptions}
-      </select>
-      <br>
-      <button id="view-unit-qr-codes-btn" style="padding:10px 18px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer;">
-        View / Print Codes
-      </button>
-      <div id="unit-qr-codes-panel" style="margin-top:16px;"></div>
-    </div>
-    <div class="card">
-      <h3 style="color:var(--navy); margin-bottom:14px;">Import Privy Units (CSV)</h3>
-      <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">
-        CSV columns required: <code>unit_name, location, type</code> (type must be Male, Female, or ADA).
-        Importing <strong>replaces all units</strong> for the selected site — existing units for that site will be overwritten.
+        Add units one at a time, or import a CSV (columns: <code>unit_name, location, type</code> \u2014 type must be Male, Female, or ADA). Importing <strong>replaces all units</strong> for the selected site.
       </p>
       <label style="display:block; font-size:0.85rem; margin-bottom:6px; color:var(--muted);">Site</label>
       <select id="admin-site-select" style="padding:8px; border-radius:6px; border:1px solid var(--border); margin-bottom:14px; width:200px;">
@@ -3476,10 +3440,10 @@ function renderAdminPanel(content) {
       <button id="csv-import-btn" style="padding:10px 18px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer;">
         Import CSV
       </button>
-      <div id="csv-import-status" style="margin-top:12px; font-size:0.85rem;"></div>
-    </div>
-    <div class="card">
-      <h3 style="color:var(--navy); margin-bottom:14px;">Add Unit</h3>
+      <div id="csv-import-status" style="margin-top:12px; font-size:0.85rem; margin-bottom:16px;"></div>
+
+      <hr style="border:none; border-top:1px solid var(--border); margin:16px 0;">
+
       <div style="display:grid; grid-template-columns: 2fr 2fr 1fr; gap:12px; margin-bottom:12px;">
         <div>
           <label style="display:block; font-size:0.8rem; color:var(--muted); margin-bottom:4px;">Unit Name</label>
@@ -3768,21 +3732,69 @@ function renderAdminPanel(content) {
     });
   });
 
-  document.getElementById("get-single-code-btn").addEventListener("click", () => {
-    renderSingleTestCode(document.getElementById("single-code-panel"), document.getElementById("single-code-site-select").value);
-  });
+  // ===== Location Barcode widget: pick site/location, toggle View/Print vs Test Scan =====
+  const barcodeSiteSelect = document.getElementById("barcode-site-select");
+  const barcodeLocationSelect = document.getElementById("barcode-location-select");
+  const barcodePanel = document.getElementById("barcode-panel");
+  const modeViewBtn = document.getElementById("barcode-mode-view");
+  const modeTestBtn = document.getElementById("barcode-mode-test");
+  let barcodeMode = "view";
 
-  document.getElementById("open-scan-lookup-btn").addEventListener("click", () => {
-    renderScanLookup(document.getElementById("scan-lookup-panel"), document.getElementById("scan-lookup-site-select").value);
-  });
+  function setBarcodeMode(mode) {
+    barcodeMode = mode;
+    modeViewBtn.style.background = mode === "view" ? "var(--navy)" : "var(--card)";
+    modeViewBtn.style.color = mode === "view" ? "white" : "var(--navy)";
+    modeTestBtn.style.background = mode === "test" ? "var(--navy)" : "var(--card)";
+    modeTestBtn.style.color = mode === "test" ? "white" : "var(--navy)";
+    renderBarcodePanel();
+  }
 
-  document.getElementById("view-qr-codes-btn").addEventListener("click", () => {
-    renderLocationQRCodes(document.getElementById("qr-codes-panel"), document.getElementById("qr-site-select").value);
-  });
+  function renderBarcodePanel() {
+    const site = barcodeSiteSelect.value;
+    const groupKey = barcodeLocationSelect.value;
+    const locationName = barcodeLocationSelect.options[barcodeLocationSelect.selectedIndex]
+      ? barcodeLocationSelect.options[barcodeLocationSelect.selectedIndex].text
+      : "";
+    if (!groupKey) {
+      barcodePanel.innerHTML = `<div class="panel-placeholder">No locations for this site yet.</div>`;
+      return;
+    }
+    if (barcodeMode === "view") {
+      barcodePanel.innerHTML = `
+        <div style="text-align:center; padding:16px;">
+          <canvas id="barcode-view-canvas"></canvas>
+          <div style="font-weight:700; margin-top:10px;">${locationName}</div>
+          <button id="barcode-print-btn" style="margin-top:12px; padding:8px 16px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer;">Print</button>
+        </div>
+      `;
+      if (typeof QRCode !== "undefined") {
+        QRCode.toCanvas(document.getElementById("barcode-view-canvas"), locationScanCode(site, groupKey), { width: 240 }, () => {});
+      }
+      document.getElementById("barcode-print-btn").addEventListener("click", () => window.print());
+    } else {
+      renderLocationScanGate(barcodePanel, site, groupKey, locationName, () => {
+        barcodePanel.innerHTML = `<div class="panel-placeholder" style="color:var(--success); border-color:var(--success);">Scan matched ${locationName}.</div>`;
+      });
+    }
+  }
 
-  document.getElementById("view-unit-qr-codes-btn").addEventListener("click", () => {
-    renderUnitQRCodes(document.getElementById("unit-qr-codes-panel"), document.getElementById("unit-qr-site-select").value);
-  });
+  function loadBarcodeLocations() {
+    barcodeLocationSelect.innerHTML = `<option>Loading...</option>`;
+    getLocationGroups(barcodeSiteSelect.value).then((groups) => {
+      const groupKeys = Object.keys(groups);
+      barcodeLocationSelect.innerHTML = groupKeys.length
+        ? groupKeys.map(key => `<option value="${key}">${groups[key].name}</option>`).join("")
+        : `<option value="">No locations</option>`;
+      renderBarcodePanel();
+    });
+  }
+
+  barcodeSiteSelect.addEventListener("change", loadBarcodeLocations);
+  barcodeLocationSelect.addEventListener("change", renderBarcodePanel);
+  modeViewBtn.addEventListener("click", () => setBarcodeMode("view"));
+  modeTestBtn.addEventListener("click", () => setBarcodeMode("test"));
+  barcodeMode = "view";
+  loadBarcodeLocations();
 
   document.getElementById("csv-template-btn").addEventListener("click", () => {
     const site = siteSelect.value;
