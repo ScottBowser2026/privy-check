@@ -620,7 +620,8 @@ function renderEventOverviewSection() {
       { id: "during-event", label: "Status reports", icon: "📋", bg: "#e6f0fb", text: "#2c5f8a" },
       { id: "oor-manage", label: "Out of order", icon: "🔧", bg: "#fbe9e7", text: "var(--danger)", badge: openFlags },
       { id: "medical-alerts", label: "Medical alerts", icon: "🩹", bg: "#fbf1e0", text: "var(--warn)" },
-      { id: "closing-history", label: "Closing", icon: "📝", bg: "#efe9fb", text: "#5b3ea6" }
+      { id: "closing-history", label: "Closing", icon: "📝", bg: "#efe9fb", text: "#5b3ea6" },
+      { id: "inventory-requests-sitewide", label: "Inventory requests", icon: "📦", bg: "#fdf1e7", text: "#8a4b0f" }
     ];
     subTiles.forEach((t) => {
       const el = document.createElement("div");
@@ -643,7 +644,25 @@ function renderEventSubSection(tabId) {
   const content = document.getElementById("main-content");
   content.innerHTML = `<button class="back-to-event-btn" style="background:none; border:none; color:var(--muted); cursor:pointer; font-size:0.85rem; margin-bottom:14px; padding:0;">&larr; Back to Event</button><div id="event-sub-content"></div>`;
   content.querySelector(".back-to-event-btn").addEventListener("click", renderEventOverviewSection);
-  renderTabContent(tabId, document.getElementById("event-sub-content"));
+  const subContent = document.getElementById("event-sub-content");
+  if (tabId === "inventory-requests-sitewide") {
+    renderInventoryRequestsSitewide(subContent);
+  } else {
+    renderTabContent(tabId, subContent);
+  }
+}
+
+// System-wide reorder list — always all four sites for Superadmin (this is
+// the one screen that intentionally aggregates, independent of the header
+// site-selector), just the one site for anyone site-scoped.
+function renderInventoryRequestsSitewide(content) {
+  const sites = hasRole(currentUser, "superadmin") ? Object.keys(SITES) : [currentUser.site];
+  content.innerHTML = `<div class="card"><p style="color:var(--muted);">Loading inventory requests...</p></div>`;
+
+  Promise.all(sites.map(site => getReorderRows(site).then(rows => ({ site, rows }))))
+    .then((results) => {
+      content.innerHTML = results.map(({ site, rows }) => reorderListHtml(rows, site)).join("");
+    });
 }
 
 function renderAdminPanelSection() {
