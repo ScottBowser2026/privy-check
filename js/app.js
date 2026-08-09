@@ -3524,11 +3524,12 @@ function renderAdminPanel(content) {
 
   document.getElementById("csv-template-btn").addEventListener("click", () => {
     const site = siteSelect.value;
-    const blob = new Blob([csvContent], { type: "text/csv" });
+    const locationsCsvContent = "unit_name,location,type\nKing Loo,Absinthe Area,Male\nKing Loo,Absinthe Area,Female\nKing Loo,Absinthe Area,ADA\n";
+    const blob = new Blob([locationsCsvContent], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `privy-check-units-${site}-template.csv`;
+    a.download = `privy-check-locations-${site}-template.csv`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
