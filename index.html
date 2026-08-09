@@ -2,11 +2,19 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <title>Privy Check</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#1e2a3a">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Privy Check">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="icon" href="icon-192.png">
 <style>
   :root {
     --navy: #1e2a3a;
@@ -122,12 +130,13 @@
   }
   header.topbar .brand { font-size: 1.15rem; font-weight: 600; }
   header.topbar .brand span { color: var(--gold-light); }
-  .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 0.85rem; }
+  .topbar-right { display: flex; align-items: center; gap: 14px; font-size: 0.85rem; flex-wrap: wrap; }
   select#site-selector {
     padding: 6px 10px;
     border-radius: 6px;
     border: none;
     font-size: 0.85rem;
+    max-width: 130px;
   }
   #logout-btn {
     background: transparent;
@@ -137,6 +146,12 @@
     border-radius: 6px;
     cursor: pointer;
     font-size: 0.8rem;
+  }
+  @media (max-width: 480px) {
+    header.topbar { padding: 10px 14px; }
+    header.topbar .brand { font-size: 1rem; width: 100%; }
+    #medical-alert-btn { font-size: 0.75rem; padding: 8px 12px; }
+    #user-name-display { display: none; }
   }
   nav.tabs {
     display: flex;
@@ -173,6 +188,7 @@
     text-align: center;
     cursor: pointer;
     transition: transform 0.1s ease;
+    -webkit-tap-highlight-color: transparent;
   }
   .landing-tile:active { transform: scale(0.98); }
   .event-stats-row {
@@ -187,7 +203,11 @@
     text-align: center;
   }
   @media (max-width: 600px) {
-    .event-stats-row { grid-template-columns: repeat(2, minmax(100px, 1fr)); }
+    main.content { padding: 16px; }
+    .landing-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: 100%; }
+    .landing-tile { padding: 18px 12px; }
+    .event-stats-row { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: 100%; }
+    .event-stat-card { padding: 12px; }
   }
   .panel-placeholder {
     background: var(--card);
@@ -316,6 +336,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@3/dist/email.min.js"></script>
-<script src="js/app.js?v=47"></script>
+<script src="js/app.js?v=48"></script>
 </body>
 </html>
