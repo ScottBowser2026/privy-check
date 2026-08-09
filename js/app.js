@@ -1046,7 +1046,7 @@ function renderAttendantGroupsLanding(content) {
           <div style="color:var(--muted); font-size:0.8rem; margin-top:2px;">${group.units.length} unit${group.units.length === 1 ? "" : "s"}</div>
         </div>
         <div style="display:flex; align-items:center; gap:8px;">
-          ${flagged ? `<span style="font-size:0.75rem; background:var(--danger); color:white; border-radius:10px; padding:3px 9px;">${flagged} flagged</span>` : ""}
+          ${flagged ? `<span style="font-size:0.75rem; background:var(--danger); color:white; border-radius:10px; padding:3px 9px;">${flagged} of ${group.units.length} out of order</span>` : ""}
           <span style="color:var(--muted);">&rsaquo;</span>
         </div>
       `;
@@ -4212,35 +4212,79 @@ function loadUnitsTable(site) {
       return;
     }
     const units = snap.val();
-    const rows = Object.entries(units).map(([key, u]) =>
-      `<tr>
-        <td style="padding:8px; border-bottom:1px solid var(--border);">${u.name}</td>
-        <td style="padding:8px; border-bottom:1px solid var(--border);">${u.location || "—"}</td>
-        <td style="padding:8px; border-bottom:1px solid var(--border);">${u.type}</td>
-        <td style="padding:8px; border-bottom:1px solid var(--border);">${u.status}</td>
-        <td style="padding:8px; border-bottom:1px solid var(--border);">
-          <button class="delete-unit-btn" data-key="${key}" data-name="${u.name} (${u.type})" style="padding:4px 10px; background:none; border:1px solid var(--danger); color:var(--danger); border-radius:4px; cursor:pointer; font-size:0.75rem;">Remove</button>
-        </td>
-      </tr>`
-    ).join("");
 
-    container.innerHTML = `
-      <table style="width:100%; border-collapse:collapse; font-size:0.85rem;">
-        <thead>
-          <tr style="text-align:left; color:var(--muted);">
-            <th style="padding:8px; border-bottom:2px solid var(--border);">Location</th>
-            <th style="padding:8px; border-bottom:2px solid var(--border);">Area</th>
-            <th style="padding:8px; border-bottom:2px solid var(--border);">Type</th>
-            <th style="padding:8px; border-bottom:2px solid var(--border);">Status</th>
-            <th style="padding:8px; border-bottom:2px solid var(--border);"></th>
-          </tr>
-        </thead>
-        <tbody>${rows}</tbody>
-      </table>
-    `;
+    // Group by location so a big location (e.g. 25 units) shows an
+    // at-a-glance out-of-order count instead of forcing a scroll through
+    // every individual row to figure out how many are down.
+    const groups = {};
+    Object.entries(units).forEach(([key, u]) => {
+      const groupKey = u.name.trim().replace(/[.#$/\[\]]/g, "_");
+      if (!groups[groupKey]) groups[groupKey] = { name: u.name, area: u.location, units: [] };
+      groups[groupKey].units.push({ key, ...u });
+    });
+
+    const groupBlocks = Object.entries(groups).map(([groupKey, g]) => {
+      const outOfOrderCount = g.units.filter(u => u.status === "outOfOrder").length;
+      const total = g.units.length;
+      const badgeColor = outOfOrderCount > 0 ? "var(--danger)" : "var(--success)";
+      const badgeBg = outOfOrderCount > 0 ? "#fbe9e7" : "#e6f6ea";
+
+      const unitRows = g.units.map(u => `
+        <tr>
+          <td style="padding:8px; border-bottom:1px solid var(--border);">${u.type}</td>
+          <td style="padding:8px; border-bottom:1px solid var(--border);">${u.status}</td>
+          <td style="padding:8px; border-bottom:1px solid var(--border);">
+            <button class="delete-unit-btn" data-key="${u.key}" data-name="${u.name} (${u.type})" style="padding:4px 10px; background:none; border:1px solid var(--danger); color:var(--danger); border-radius:4px; cursor:pointer; font-size:0.75rem;">Remove</button>
+          </td>
+        </tr>
+      `).join("");
+
+      return `
+        <div class="card" style="margin-bottom:12px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; cursor:pointer;" class="location-group-toggle" data-group-key="${groupKey}">
+            <div>
+              <strong>${g.name}</strong>${g.area ? ` <span style="color:var(--muted); font-size:0.8rem;">— ${g.area}</span>` : ""}
+              <span style="color:var(--muted); font-size:0.8rem; margin-left:8px;">${total} unit${total === 1 ? "" : "s"}</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <span style="font-size:0.75rem; font-weight:600; padding:3px 10px; border-radius:10px; background:${badgeBg}; color:${badgeColor};">
+                ${outOfOrderCount > 0 ? `${outOfOrderCount} of ${total} out of order` : `All ${total} OK`}
+              </span>
+              <span class="location-group-arrow" data-group-key="${groupKey}" style="color:var(--muted);">▾</span>
+            </div>
+          </div>
+          <div class="location-group-detail" data-group-key="${groupKey}" style="display:none; margin-top:10px;">
+            <table style="width:100%; border-collapse:collapse; font-size:0.85rem;">
+              <thead>
+                <tr style="text-align:left; color:var(--muted);">
+                  <th style="padding:8px; border-bottom:2px solid var(--border);">Type</th>
+                  <th style="padding:8px; border-bottom:2px solid var(--border);">Status</th>
+                  <th style="padding:8px; border-bottom:2px solid var(--border);"></th>
+                </tr>
+              </thead>
+              <tbody>${unitRows}</tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    }).join("");
+
+    container.innerHTML = groupBlocks;
+
+    container.querySelectorAll(".location-group-toggle").forEach((el) => {
+      el.addEventListener("click", () => {
+        const groupKey = el.dataset.groupKey;
+        const detail = container.querySelector(`.location-group-detail[data-group-key="${groupKey}"]`);
+        const arrow = container.querySelector(`.location-group-arrow[data-group-key="${groupKey}"]`);
+        const isHidden = detail.style.display === "none";
+        detail.style.display = isHidden ? "block" : "none";
+        arrow.textContent = isHidden ? "▴" : "▾";
+      });
+    });
 
     container.querySelectorAll(".delete-unit-btn").forEach((btn) => {
-      btn.addEventListener("click", () => {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
         if (!confirm(`Remove ${btn.dataset.name}? This can't be undone — any inventory count or out-of-order history tied to this specific unit key will be orphaned.`)) return;
         db.ref(`sites/${site}/units/${btn.dataset.key}`).remove()
           .then(() => loadUnitsTable(site))
