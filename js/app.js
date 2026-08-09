@@ -4316,25 +4316,17 @@ function loadUnitsTable(site) {
       return;
     }
     const units = snap.val();
-    const rows = Object.entries(units).map(([key, u]) => {
-      const groupKey = u.name.trim().replace(/[.#$/\[\]]/g, "_");
-      return `<tr>
+    const rows = Object.entries(units).map(([key, u]) =>
+      `<tr>
         <td style="padding:8px; border-bottom:1px solid var(--border);">${u.name}</td>
         <td style="padding:8px; border-bottom:1px solid var(--border);">${u.location || "—"}</td>
         <td style="padding:8px; border-bottom:1px solid var(--border);">${u.type}</td>
         <td style="padding:8px; border-bottom:1px solid var(--border);">${u.status}</td>
         <td style="padding:8px; border-bottom:1px solid var(--border);">
-          <button class="show-barcode-btn" data-group-key="${groupKey}" data-name="${u.name}" style="padding:4px 10px; background:none; border:1px solid var(--navy); color:var(--navy); border-radius:4px; cursor:pointer; font-size:0.75rem; margin-right:6px;">Barcode</button>
           <button class="delete-unit-btn" data-key="${key}" data-name="${u.name} (${u.type})" style="padding:4px 10px; background:none; border:1px solid var(--danger); color:var(--danger); border-radius:4px; cursor:pointer; font-size:0.75rem;">Remove</button>
         </td>
-      </tr>
-      <tr class="barcode-row" data-group-key="${groupKey}" style="display:none;">
-        <td colspan="5" style="padding:12px; border-bottom:1px solid var(--border); text-align:center;">
-          <canvas id="barcode-canvas-${groupKey}"></canvas>
-          <div><button class="print-barcode-btn" style="margin-top:8px; padding:6px 14px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer; font-size:0.75rem;">Print</button></div>
-        </td>
-      </tr>`;
-    }).join("");
+      </tr>`
+    ).join("");
 
     container.innerHTML = `
       <table style="width:100%; border-collapse:collapse; font-size:0.85rem;">
@@ -4358,22 +4350,6 @@ function loadUnitsTable(site) {
           .then(() => loadUnitsTable(site))
           .catch((err) => alert("Failed to remove: " + err.message));
       });
-    });
-
-    container.querySelectorAll(".show-barcode-btn").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const groupKey = btn.dataset.groupKey;
-        const row = container.querySelector(`.barcode-row[data-group-key="${groupKey}"]`);
-        const isHidden = row.style.display === "none";
-        row.style.display = isHidden ? "table-row" : "none";
-        if (isHidden && typeof QRCode !== "undefined") {
-          QRCode.toCanvas(document.getElementById(`barcode-canvas-${groupKey}`), locationScanCode(site, groupKey), { width: 200 }, () => {});
-        }
-      });
-    });
-
-    container.querySelectorAll(".print-barcode-btn").forEach((btn) => {
-      btn.addEventListener("click", () => window.print());
     });
   });
 }
