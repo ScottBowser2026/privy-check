@@ -304,6 +304,13 @@ exports.sendMedicalAlertNotification = onValueCreated(
   }
 );
 
+/**
+ * sendSupplyFulfilledAlert
+ * Fires when a supply request is marked fulfilled. Sends the full delivery
+ * confirmation (item, quantity, who delivered it) to on-duty Maintenance MOD
+ * for their own record-keeping/accountability, and a short soft alert to
+ * Super User just letting them know it's handled.
+ */
 exports.sendSupplyFulfilledAlert = onValueUpdated(
   {
     ref: "sites/{site}/supplyRequests/{requestId}",
@@ -318,11 +325,18 @@ exports.sendSupplyFulfilledAlert = onValueUpdated(
     if (before.status === "fulfilled" || after.status !== "fulfilled") return;
 
     try {
-      const superuserPhones = await getModPhoneNumbers(site, "superuser");
-      if (!superuserPhones.length) return;
+      const [maintenancePhones, superuserPhones] = await Promise.all([
+        getModPhoneNumbers(site, "maintenance"),
+        getModPhoneNumbers(site, "superuser")
+      ]);
 
-      const body = `Privy Check: ${after.itemName} at ${after.groupName} (${after.sex}) fulfilled by ${after.fulfilledByName} — ${after.fulfilledQty ?? "?"} cases delivered.`;
-      await Promise.all(superuserPhones.map(phone => sendSmsOrLog(phone, body, "supplyRequestFulfilled")));
+      const maintenanceBody = `Privy Check: Delivery confirmed — ${after.fulfilledQty ?? "?"} case(s) of ${after.itemName} delivered to ${after.groupName} (${after.sex}) by ${after.fulfilledByName}.`;
+      await Promise.all(maintenancePhones.map(phone => sendSmsOrLog(phone, maintenanceBody, "supplyRequestFulfilled")));
+
+      if (superuserPhones.length) {
+        const softBody = `Privy Check: Supplies delivered to ${after.groupName}.`;
+        await Promise.all(superuserPhones.map(phone => sendSmsOrLog(phone, softBody, "supplyRequestFulfilledSoft")));
+      }
     } catch (err) {
       console.error("sendSupplyFulfilledAlert error:", err);
     }
