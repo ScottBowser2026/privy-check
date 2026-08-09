@@ -2012,7 +2012,12 @@ function renderOutOfOrderManagement(content) {
                 <strong>${f.unitName}</strong> ${sitesToShow.length > 1 ? `<span style="color:var(--muted); font-size:0.8rem;">(${SITES[f.site]})</span>` : ""}
                 <div style="color:var(--muted); font-size:0.85rem; margin-top:4px;">${f.reason}${f.notes ? " — " + f.notes : ""}</div>
                 <div style="color:var(--muted); font-size:0.75rem; margin-top:4px;">Flagged by ${f.flaggedByName} · ${when}</div>
-                ${f.status === "open" && f.wasReassigned ? `<div style="color:var(--warn); font-size:0.8rem; margin-top:4px;">⚠ Maintenance reported this still needs repair</div>` : ""}
+                ${f.status === "open" && f.wasReassigned ? `
+                  <div style="background:#fbf1e0; border-radius:6px; padding:8px 10px; margin-top:6px; font-size:0.8rem; color:var(--warn);">
+                    <strong>⚠ Still needs repair${f.repairNote ? ":" : ""}</strong> ${f.repairNote || "(no details given)"}
+                    ${f.repairNoteByName ? `<span style="color:var(--muted);"> — ${f.repairNoteByName}</span>` : ""}
+                  </div>
+                ` : ""}
               </div>
               <div style="text-align:right;">
                 <div style="margin-bottom:6px;">${statusBadge}</div>
@@ -2100,6 +2105,7 @@ function renderMaintenanceQueue(content) {
           <strong>${f.unitName}</strong>
           <div style="color:var(--muted); font-size:0.85rem; margin:6px 0;">${f.reason}${f.notes ? " — " + f.notes : ""}</div>
           <div style="color:var(--muted); font-size:0.75rem; margin-bottom:12px;">Flagged by ${f.flaggedByName} · ${when}</div>
+          ${f.repairNote ? `<div style="background:#fbf1e0; border-radius:6px; padding:8px 10px; margin-bottom:12px; font-size:0.8rem; color:var(--warn);"><strong>Still needs:</strong> ${f.repairNote} <span style="color:var(--muted);">— ${f.repairNoteByName}</span></div>` : ""}
           <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
             <select class="assign-to-me-select" data-flag-id="${f.flagId}" style="padding:6px; border-radius:6px; border:1px solid var(--border);">
               ${assignOptions}
@@ -2114,17 +2120,29 @@ function renderMaintenanceQueue(content) {
 
     const myFlagsHtml = myFlags.map(f => {
       const when = f.assignedAt ? new Date(f.assignedAt).toLocaleString() : "—";
+      const reassignOptions = maintenanceStaff.map(t =>
+        `<option value="${t.uid}" ${t.uid === f.assignedToUid ? "selected" : ""}>${t.name}${t.uid === currentUser.uid ? " (me)" : ""}</option>`
+      ).join("");
       return `
         <div class="card" id="my-flag-card-${f.flagId}" style="margin-bottom:10px;">
           <strong>${f.unitName}</strong>
           <div style="color:var(--muted); font-size:0.85rem; margin:6px 0;">${f.reason}${f.notes ? " — " + f.notes : ""}</div>
           <div style="color:var(--muted); font-size:0.75rem; margin-bottom:12px;">Assigned ${when}</div>
-          <button class="complete-btn" data-flag-id="${f.flagId}" data-unit-key="${f.unitKey}" data-group-key="${f.groupKey || ""}" data-unit-name="${f.unitName}" style="padding:8px 16px; background:var(--success); color:white; border:none; border-radius:6px; cursor:pointer; margin-right:8px;">
-            Mark Completed
-          </button>
-          <button class="needs-repair-btn" data-flag-id="${f.flagId}" style="padding:8px 16px; background:var(--warn); color:white; border:none; border-radius:6px; cursor:pointer;">
-            Still Needs Repair
-          </button>
+          <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
+            <button class="complete-btn" data-flag-id="${f.flagId}" data-unit-key="${f.unitKey}" data-group-key="${f.groupKey || ""}" data-unit-name="${f.unitName}" style="padding:8px 16px; background:var(--success); color:white; border:none; border-radius:6px; cursor:pointer;">
+              Mark Completed
+            </button>
+            <button class="needs-repair-btn" data-flag-id="${f.flagId}" style="padding:8px 16px; background:var(--warn); color:white; border:none; border-radius:6px; cursor:pointer;">
+              Still Needs Repair
+            </button>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding-top:8px; border-top:1px solid var(--border);">
+            <label style="font-size:0.75rem; color:var(--muted);">Reassign to:</label>
+            <select class="reassign-select" data-flag-id="${f.flagId}" style="padding:5px; border-radius:6px; border:1px solid var(--border); font-size:0.8rem;">
+              ${reassignOptions}
+            </select>
+            <button class="reassign-btn" data-flag-id="${f.flagId}" style="padding:5px 12px; background:none; border:1px solid var(--navy); color:var(--navy); border-radius:6px; cursor:pointer; font-size:0.8rem;">Reassign</button>
+          </div>
         </div>
       `;
     }).join("");
@@ -2187,19 +2205,56 @@ function renderMaintenanceQueue(content) {
       });
     });
 
+    content.querySelectorAll(".reassign-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const flagId = btn.dataset.flagId;
+        const select = content.querySelector(`.reassign-select[data-flag-id="${flagId}"]`);
+        const uid = select.value;
+        const name = select.options[select.selectedIndex].text.replace(" (me)", "");
+        btn.disabled = true;
+        btn.textContent = "Reassigning...";
+        db.ref(`sites/${site}/outOfOrder/${flagId}`).update({
+          assignedToUid: uid, assignedToName: name,
+          assignedAt: firebase.database.ServerValue.TIMESTAMP
+        })
+        .then(() => renderMaintenanceQueue(content))
+        .catch((err) => { alert("Failed to reassign: " + err.message); btn.disabled = false; btn.textContent = "Reassign"; });
+      });
+    });
+
     content.querySelectorAll(".needs-repair-btn").forEach((btn) => {
       btn.addEventListener("click", () => {
         const flagId = btn.dataset.flagId;
-        db.ref(`sites/${site}/outOfOrder/${flagId}`).update({
-          status: "open",
-          assignedToUid: null,
-          assignedToName: null,
-          wasReassigned: true,
-          reopenedAt: firebase.database.ServerValue.TIMESTAMP,
-          escalatedAt: null
-        })
-        .then(() => renderMaintenanceQueue(content))
-        .catch((err) => alert("Failed to update: " + err.message));
+        const cardEl = document.getElementById(`my-flag-card-${flagId}`);
+
+        // Ask what's needed before reopening, rather than a silent bounce —
+        // Super User needs to know why, not just that it's stuck again.
+        if (cardEl.querySelector(".repair-note-box")) return; // already showing
+        const box = document.createElement("div");
+        box.className = "repair-note-box";
+        box.style.cssText = "margin-top:10px; padding-top:10px; border-top:1px solid var(--border);";
+        box.innerHTML = `
+          <label style="display:block; font-size:0.8rem; color:var(--muted); margin-bottom:4px;">What's needed to fix this?</label>
+          <textarea class="repair-note-input" rows="2" placeholder="e.g. need a replacement wax ring, need a plumber, part on order..." style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; font-family:inherit; margin-bottom:8px;"></textarea>
+          <button class="repair-note-submit-btn" data-flag-id="${flagId}" style="padding:6px 14px; background:var(--warn); color:white; border:none; border-radius:6px; cursor:pointer; font-size:0.8rem;">Send back to Super User</button>
+        `;
+        cardEl.appendChild(box);
+
+        box.querySelector(".repair-note-submit-btn").addEventListener("click", () => {
+          const note = box.querySelector(".repair-note-input").value.trim();
+          db.ref(`sites/${site}/outOfOrder/${flagId}`).update({
+            status: "open",
+            assignedToUid: null,
+            assignedToName: null,
+            wasReassigned: true,
+            reopenedAt: firebase.database.ServerValue.TIMESTAMP,
+            escalatedAt: null,
+            repairNote: note || null,
+            repairNoteByName: `${currentUser.firstName} ${currentUser.lastName}`
+          })
+          .then(() => renderMaintenanceQueue(content))
+          .catch((err) => alert("Failed to update: " + err.message));
+        });
       });
     });
   });
