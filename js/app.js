@@ -1788,6 +1788,8 @@ function renderOutOfOrderManagement(content) {
 
   content.innerHTML = `<div class="card"><p style="color:var(--muted);">Loading reports...</p></div>`;
 
+  const oversightNote = `<p style="color:var(--muted); font-size:0.8rem; margin-bottom:14px;">Maintenance is auto-texted and assigns this to their own team. Use the dropdown below only to override in an emergency.</p>`;
+
   const allFlags = [];
   const fetches = sitesToShow.map(site =>
     db.ref(`sites/${site}/outOfOrder`).once("value").then(snap => {
@@ -1812,7 +1814,7 @@ function renderOutOfOrderManagement(content) {
       const requestsSlot = singleSite ? supplyRequestsSlotHtml() : "";
 
       if (!allFlags.length) {
-        content.innerHTML = requestsSlot || `<div class="panel-placeholder">No out-of-order reports for ${sitesToShow.length > 1 ? "any site" : SITES[sitesToShow[0]]} right now.</div>`;
+        content.innerHTML = oversightNote + (requestsSlot || `<div class="panel-placeholder">No out-of-order reports for ${sitesToShow.length > 1 ? "any site" : SITES[sitesToShow[0]]} right now.</div>`);
         if (singleSite) attachLiveSupplyRequestsListener(singleSite);
         return;
       }
@@ -1857,7 +1859,7 @@ function renderOutOfOrderManagement(content) {
         `;
       }).join("");
 
-      content.innerHTML = requestsSlot + rowsHtml;
+      content.innerHTML = oversightNote + requestsSlot + rowsHtml;
       if (singleSite) attachLiveSupplyRequestsListener(singleSite);
 
       content.querySelectorAll(".assign-select").forEach((select) => {
@@ -1889,38 +1891,58 @@ function renderMaintenanceHome(content) {
 
 function renderMaintenanceQueue(content) {
   const site = currentUser.site;
-  content.innerHTML = `<div class="card"><p style="color:var(--muted);">Loading assigned units...</p></div>`;
+  content.innerHTML = `<div class="card"><p style="color:var(--muted);">Loading flags...</p></div>`;
 
-  db.ref(`sites/${site}/outOfOrder`).once("value").then((snap) => {
+  Promise.all([
+    db.ref(`sites/${site}/outOfOrder`).once("value"),
+    db.ref("users").once("value")
+  ]).then(([flagsSnap, usersSnap]) => {
+    const openFlags = [];
     const myFlags = [];
-    if (snap.exists()) {
-      snap.forEach((child) => {
+    if (flagsSnap.exists()) {
+      flagsSnap.forEach((child) => {
         const f = child.val();
-        if (f.assignedToUid === currentUser.uid && f.status === "assigned") {
-          myFlags.push({ flagId: child.key, ...f });
-        }
+        if (f.status === "open") openFlags.push({ flagId: child.key, ...f });
+        else if (f.assignedToUid === currentUser.uid && f.status === "assigned") myFlags.push({ flagId: child.key, ...f });
       });
     }
-
-    if (!myFlags.length) {
-      content.innerHTML = supplyRequestsSlotHtml();
-      attachLiveSupplyRequestsListener(site);
-      // If there truly are no requests either, the slot will just render empty —
-      // add a fallback message below it after the first listener callback.
-      db.ref(`sites/${site}/supplyRequests`).once("value").then((snap) => {
-        if (!snap.exists()) {
-          const slot = document.getElementById("supply-requests-live-slot");
-          if (slot && !slot.innerHTML.trim()) {
-            content.insertAdjacentHTML("beforeend", `<div class="panel-placeholder">No units currently assigned to you.</div>`);
-          }
-        }
-      });
-      return;
-    }
-
+    openFlags.sort((a, b) => (b.flaggedAt || 0) - (a.flaggedAt || 0));
     myFlags.sort((a, b) => (b.assignedAt || 0) - (a.assignedAt || 0));
 
-    const flagsHtml = myFlags.map(f => {
+    // Maintenance staff at this site, for internal delegation
+    const maintenanceStaff = [];
+    if (usersSnap.exists()) {
+      usersSnap.forEach((child) => {
+        const u = child.val();
+        if (hasRole(u, "maintenance") && u.site === site && u.active !== false) {
+          maintenanceStaff.push({ uid: child.key, name: `${u.firstName} ${u.lastName}` });
+        }
+      });
+    }
+    const assignOptions = maintenanceStaff.map(t =>
+      `<option value="${t.uid}" ${t.uid === currentUser.uid ? "selected" : ""}>${t.name}${t.uid === currentUser.uid ? " (me)" : ""}</option>`
+    ).join("");
+
+    const openFlagsHtml = openFlags.length ? openFlags.map(f => {
+      const when = f.flaggedAt ? new Date(f.flaggedAt).toLocaleString() : "—";
+      return `
+        <div class="card" style="margin-bottom:10px; border-left:4px solid var(--danger);">
+          <strong>${f.unitName}</strong>
+          <div style="color:var(--muted); font-size:0.85rem; margin:6px 0;">${f.reason}${f.notes ? " — " + f.notes : ""}</div>
+          <div style="color:var(--muted); font-size:0.75rem; margin-bottom:12px;">Flagged by ${f.flaggedByName} · ${when}</div>
+          <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+            <select class="assign-to-me-select" data-flag-id="${f.flagId}" style="padding:6px; border-radius:6px; border:1px solid var(--border);">
+              ${assignOptions}
+            </select>
+            <button class="claim-flag-btn" data-flag-id="${f.flagId}" style="padding:8px 16px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer;">
+              Assign
+            </button>
+          </div>
+        </div>
+      `;
+    }).join("") : `<div class="panel-placeholder">No open flags waiting on Maintenance.</div>`;
+
+    const myFlagsHtml = myFlags.map(f => {
       const when = f.assignedAt ? new Date(f.assignedAt).toLocaleString() : "—";
       return `
         <div class="card" style="margin-bottom:10px;">
@@ -1937,8 +1959,32 @@ function renderMaintenanceQueue(content) {
       `;
     }).join("");
 
-    content.innerHTML = supplyRequestsSlotHtml() + flagsHtml;
+    content.innerHTML = `
+      <h4 style="color:var(--navy); margin-bottom:10px;">Open — needs assignment</h4>
+      ${openFlagsHtml}
+      <h4 style="color:var(--navy); margin:20px 0 10px;">Assigned to me</h4>
+      <div id="my-flags-slot">${myFlagsHtml || `<div class="panel-placeholder">Nothing assigned to you right now.</div>`}</div>
+      ${supplyRequestsSlotHtml()}
+    `;
     attachLiveSupplyRequestsListener(site);
+
+    content.querySelectorAll(".claim-flag-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const flagId = btn.dataset.flagId;
+        const select = content.querySelector(`.assign-to-me-select[data-flag-id="${flagId}"]`);
+        const uid = select.value;
+        const name = select.options[select.selectedIndex].text.replace(" (me)", "");
+        btn.disabled = true;
+        btn.textContent = "Assigning...";
+        db.ref(`sites/${site}/outOfOrder/${flagId}`).update({
+          assignedToUid: uid, assignedToName: name,
+          assignedAt: firebase.database.ServerValue.TIMESTAMP,
+          status: "assigned", wasReassigned: false
+        })
+        .then(() => renderMaintenanceQueue(content))
+        .catch((err) => { alert("Failed to assign: " + err.message); btn.disabled = false; btn.textContent = "Assign"; });
+      });
+    });
 
     content.querySelectorAll(".complete-btn").forEach((btn) => {
       btn.addEventListener("click", () => {
