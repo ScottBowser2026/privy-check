@@ -364,10 +364,6 @@ function setupSiteSelector() {
   selector.disabled = false; // reset — a prior login in this same tab may have disabled it
 
   if (hasRole(currentUser, "superadmin")) {
-    const allOpt = document.createElement("option");
-    allOpt.value = "all";
-    allOpt.textContent = "All Sites";
-    selector.appendChild(allOpt);
     Object.entries(SITES).forEach(([key, label]) => {
       const opt = document.createElement("option");
       opt.value = key;
