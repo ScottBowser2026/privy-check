@@ -1,5 +1,6 @@
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { onValueCreated, onValueUpdated } = require("firebase-functions/v2/database");
+const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { defineSecret } = require("firebase-functions/params");
 const admin = require("firebase-admin");
 const twilio = require("twilio");
@@ -364,3 +365,53 @@ async function generateUniquePin() {
   return candidate;
 }
 
+/**
+ * checkStaleOutOfOrderFlags
+ * Runs every 15 minutes. When Maintenance marks a job "Still Needs Repair,"
+ * it goes back to open with a reopenedAt timestamp. If it's still sitting
+ * open (unassigned) an hour later, Super User gets texted once. Clears and
+ * re-arms if the job cycles through "still needs repair" again later.
+ */
+exports.checkStaleOutOfOrderFlags = onSchedule(
+  {
+    schedule: "every 15 minutes",
+    secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN]
+  },
+  async () => {
+    const sites = ["parf", "srf", "krf", "garf"];
+    const oneHourAgo = Date.now() - (60 * 60 * 1000);
+
+    for (const site of sites) {
+      try {
+        const snap = await db.ref(`sites/${site}/outOfOrder`).once("value");
+        if (!snap.exists()) continue;
+
+        const staleFlags = [];
+        snap.forEach((child) => {
+          const f = child.val();
+          if (
+            f.status === "open" &&
+            f.wasReassigned === true &&
+            f.reopenedAt &&
+            f.reopenedAt <= oneHourAgo &&
+            !f.escalatedAt
+          ) {
+            staleFlags.push({ flagId: child.key, ...f });
+          }
+        });
+        if (!staleFlags.length) continue;
+
+        const superuserPhones = await getModPhoneNumbers(site, "superuser");
+        if (!superuserPhones.length) continue;
+
+        await Promise.all(staleFlags.map(async (f) => {
+          const body = `Privy Check: ${f.unitName} at ${site.toUpperCase()} has been unassigned for over an hour after Maintenance marked it "still needs repair."`;
+          await Promise.all(superuserPhones.map(phone => sendSmsOrLog(phone, body, "outOfOrderStaleEscalation")));
+          await db.ref(`sites/${site}/outOfOrder/${f.flagId}`).update({ escalatedAt: Date.now() });
+        }));
+      } catch (err) {
+        console.error(`checkStaleOutOfOrderFlags error for ${site}:`, err);
+      }
+    }
+  }
+);

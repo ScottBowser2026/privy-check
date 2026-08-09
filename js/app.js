@@ -832,7 +832,9 @@ function renderFlagUnitForm(content, filterGroupKey) {
 
       const flagRef = db.ref(`sites/${site}/outOfOrder`).push();
       const flagData = {
-        unitKey, unitName, reason, notes,
+        unitKey, unitName,
+        groupKey: unitName.trim().replace(/[.#$/\[\]]/g, "_"),
+        reason, notes,
         flaggedByUid: currentUser.uid,
         flaggedByName: `${currentUser.firstName} ${currentUser.lastName}`,
         flaggedAt: firebase.database.ServerValue.TIMESTAMP,
@@ -958,6 +960,42 @@ function renderLocationQRCodes(content, site) {
 }
 
 
+// On-screen (not SMS) notice to the attendant who flagged a unit, once
+// Maintenance marks it resolved. Prepends a dismissible banner; dismissing
+// marks it acknowledged so it won't reappear.
+function showResolvedFlagNotifications(site, content) {
+  db.ref(`sites/${site}/outOfOrder`).orderByChild("flaggedByUid").equalTo(currentUser.uid).once("value").then((snap) => {
+    if (!snap.exists()) return;
+    const resolved = [];
+    snap.forEach((child) => {
+      const f = child.val();
+      if (f.status === "closed" && f.flaggerNotified !== true) resolved.push({ flagId: child.key, ...f });
+    });
+    if (!resolved.length) return;
+
+    const bannerHtml = resolved.map(f => `
+      <div class="card" data-resolved-flag-id="${f.flagId}" style="margin-bottom:10px; border-left:4px solid var(--success); background:#e6f6ea;">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
+          <div style="color:var(--success); font-weight:600;">✓ ${f.unitName} is back in service</div>
+          <button class="dismiss-resolved-btn" data-flag-id="${f.flagId}" style="padding:4px 10px; background:none; border:1px solid var(--success); color:var(--success); border-radius:6px; cursor:pointer; font-size:0.75rem;">Got it</button>
+        </div>
+      </div>
+    `).join("");
+
+    content.insertAdjacentHTML("afterbegin", bannerHtml);
+
+    content.querySelectorAll(".dismiss-resolved-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const flagId = btn.dataset.flagId;
+        db.ref(`sites/${site}/outOfOrder/${flagId}`).update({ flaggerNotified: true }).then(() => {
+          const card = content.querySelector(`[data-resolved-flag-id="${flagId}"]`);
+          if (card) card.remove();
+        });
+      });
+    });
+  });
+}
+
 function renderAttendantGroupsLanding(content) {
   const site = currentUser.site;
   content.innerHTML = `<div class="card"><p style="color:var(--muted);">Loading your assigned units...</p></div>`;
@@ -965,6 +1003,7 @@ function renderAttendantGroupsLanding(content) {
   db.ref(`sites/${site}/units`).once("value").then((snap) => {
     if (!snap.exists()) {
       content.innerHTML = `<div class="panel-placeholder">No units imported for ${SITES[site]} yet.</div>`;
+      showResolvedFlagNotifications(site, content);
       return;
     }
     const allUnits = snap.val();
@@ -972,6 +1011,7 @@ function renderAttendantGroupsLanding(content) {
 
     if (!myUnits.length) {
       content.innerHTML = `<div class="panel-placeholder">No units are currently assigned to you. Ask your Super User to assign you a unit in the Pre-Event tab.</div>`;
+      showResolvedFlagNotifications(site, content);
       return;
     }
 
@@ -991,6 +1031,7 @@ function renderAttendantGroupsLanding(content) {
       <h3 style="color:var(--navy); margin-bottom:12px;">Your locations — ${SITES[site]}</h3>
       <div id="attendant-groups-list"></div>
     `;
+    showResolvedFlagNotifications(site, content);
     const list = document.getElementById("attendant-groups-list");
 
     Object.entries(groups).forEach(([groupKey, group]) => {
@@ -1042,8 +1083,8 @@ function renderAttendantGroupDetail(site, groupKey, group) {
       actionGrid.querySelectorAll(".landing-tile").forEach(t => t.style.outline = "none");
       el.style.outline = "2px solid var(--gold)";
       if (a.id === "report") renderLocationScanGate(actionContent, site, groupKey, group.name, () => renderGroupStatusReportForm(actionContent, site, groupKey, group));
-      if (a.id === "flag") renderFlagUnitForm(actionContent, groupKey);
-      if (a.id === "supplies") renderRequestItemPicker(site, groupKey, group.name, actionContent);
+      if (a.id === "flag") renderLocationScanGate(actionContent, site, groupKey, group.name, () => renderFlagUnitForm(actionContent, groupKey));
+      if (a.id === "supplies") renderLocationScanGate(actionContent, site, groupKey, group.name, () => renderRequestItemPicker(site, groupKey, group.name, actionContent));
     });
     actionGrid.appendChild(el);
   });
@@ -1164,7 +1205,7 @@ function renderGroupStatusReportForm(content, site, groupKey, group) {
     newFlags.forEach((f) => {
       const flagRef = db.ref(`sites/${site}/outOfOrder`).push();
       writes.push(flagRef.set({
-        unitKey: f.unitKey, unitName: f.unitName, reason: f.reason, notes: f.notes,
+        unitKey: f.unitKey, unitName: f.unitName, groupKey, reason: f.reason, notes: f.notes,
         flaggedByUid: currentUser.uid,
         flaggedByName: `${currentUser.firstName} ${currentUser.lastName}`,
         flaggedAt: firebase.database.ServerValue.TIMESTAMP,
@@ -1945,11 +1986,11 @@ function renderMaintenanceQueue(content) {
     const myFlagsHtml = myFlags.map(f => {
       const when = f.assignedAt ? new Date(f.assignedAt).toLocaleString() : "—";
       return `
-        <div class="card" style="margin-bottom:10px;">
+        <div class="card" id="my-flag-card-${f.flagId}" style="margin-bottom:10px;">
           <strong>${f.unitName}</strong>
           <div style="color:var(--muted); font-size:0.85rem; margin:6px 0;">${f.reason}${f.notes ? " — " + f.notes : ""}</div>
           <div style="color:var(--muted); font-size:0.75rem; margin-bottom:12px;">Assigned ${when}</div>
-          <button class="complete-btn" data-flag-id="${f.flagId}" data-unit-key="${f.unitKey}" style="padding:8px 16px; background:var(--success); color:white; border:none; border-radius:6px; cursor:pointer; margin-right:8px;">
+          <button class="complete-btn" data-flag-id="${f.flagId}" data-unit-key="${f.unitKey}" data-group-key="${f.groupKey || ""}" data-unit-name="${f.unitName}" style="padding:8px 16px; background:var(--success); color:white; border:none; border-radius:6px; cursor:pointer; margin-right:8px;">
             Mark Completed
           </button>
           <button class="needs-repair-btn" data-flag-id="${f.flagId}" style="padding:8px 16px; background:var(--warn); color:white; border:none; border-radius:6px; cursor:pointer;">
@@ -1990,15 +2031,30 @@ function renderMaintenanceQueue(content) {
       btn.addEventListener("click", () => {
         const flagId = btn.dataset.flagId;
         const unitKey = btn.dataset.unitKey;
-        db.ref(`sites/${site}/outOfOrder/${flagId}`).update({
-          status: "closed",
-          resolvedByUid: currentUser.uid,
-          resolvedByName: `${currentUser.firstName} ${currentUser.lastName}`,
-          resolvedAt: firebase.database.ServerValue.TIMESTAMP
-        })
-        .then(() => db.ref(`sites/${site}/units/${unitKey}/status`).set("ok"))
-        .then(() => renderMaintenanceQueue(content))
-        .catch((err) => alert("Failed to mark completed: " + err.message));
+        const groupKey = btn.dataset.groupKey;
+        const unitName = btn.dataset.unitName;
+        const cardEl = document.getElementById(`my-flag-card-${flagId}`);
+
+        function doComplete() {
+          db.ref(`sites/${site}/outOfOrder/${flagId}`).update({
+            status: "closed",
+            resolvedByUid: currentUser.uid,
+            resolvedByName: `${currentUser.firstName} ${currentUser.lastName}`,
+            resolvedAt: firebase.database.ServerValue.TIMESTAMP
+          })
+          .then(() => db.ref(`sites/${site}/units/${unitKey}/status`).set("ok"))
+          .then(() => renderMaintenanceQueue(content))
+          .catch((err) => alert("Failed to mark completed: " + err.message));
+        }
+
+        if (!groupKey) {
+          // Older flag with no stored groupKey — allow completion without a scan
+          // rather than blocking Maintenance from ever clearing it.
+          doComplete();
+          return;
+        }
+
+        renderLocationScanGate(cardEl, site, groupKey, unitName, doComplete);
       });
     });
 
@@ -2009,7 +2065,9 @@ function renderMaintenanceQueue(content) {
           status: "open",
           assignedToUid: null,
           assignedToName: null,
-          wasReassigned: true
+          wasReassigned: true,
+          reopenedAt: firebase.database.ServerValue.TIMESTAMP,
+          escalatedAt: null
         })
         .then(() => renderMaintenanceQueue(content))
         .catch((err) => alert("Failed to update: " + err.message));
