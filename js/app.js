@@ -652,17 +652,17 @@ function renderEventSubSection(tabId) {
   }
 }
 
-// System-wide reorder list — always all four sites for Superadmin (this is
-// the one screen that intentionally aggregates, independent of the header
-// site-selector), just the one site for anyone site-scoped.
+// Inventory Requests tab: current site only, matching the Reorder List's
+// scope everywhere else in the app (Out of Order, Maintenance Home). For
+// Superadmin, "current site" is whatever's selected in the header dropdown.
 function renderInventoryRequestsSitewide(content) {
-  const sites = hasRole(currentUser, "superadmin") ? Object.keys(SITES) : [currentUser.site];
+  const topSelector = document.getElementById("site-selector");
+  const site = hasRole(currentUser, "superadmin") ? topSelector.value : currentUser.site;
   content.innerHTML = `<div class="card"><p style="color:var(--muted);">Loading inventory requests...</p></div>`;
 
-  Promise.all(sites.map(site => getReorderRows(site).then(rows => ({ site, rows }))))
-    .then((results) => {
-      content.innerHTML = results.map(({ site, rows }) => reorderListHtml(rows, site)).join("");
-    });
+  getReorderRows(site).then((rows) => {
+    content.innerHTML = reorderListHtml(rows, site);
+  });
 }
 
 function renderAdminPanelSection() {
@@ -1960,18 +1960,14 @@ function renderOutOfOrderManagement(content) {
 
       const singleSite = sitesToShow.length === 1 ? sitesToShow[0] : null;
       const requestsSlot = singleSite ? supplyRequestsSlotHtml() : "";
-      const reorderPromise = singleSite ? getReorderRows(singleSite) : Promise.resolve([]);
 
-      reorderPromise.then((orderRows) => {
-        const reorderHtml = singleSite ? reorderListHtml(orderRows, singleSite) : "";
+      if (!allFlags.length) {
+        content.innerHTML = oversightNote + (requestsSlot || `<div class="panel-placeholder">No out-of-order reports for ${sitesToShow.length > 1 ? "any site" : SITES[sitesToShow[0]]} right now.</div>`);
+        if (singleSite) attachLiveSupplyRequestsListener(singleSite);
+        return;
+      }
 
-        if (!allFlags.length) {
-          content.innerHTML = oversightNote + reorderHtml + (requestsSlot || `<div class="panel-placeholder">No out-of-order reports for ${sitesToShow.length > 1 ? "any site" : SITES[sitesToShow[0]]} right now.</div>`);
-          if (singleSite) attachLiveSupplyRequestsListener(singleSite);
-          return;
-        }
-
-        allFlags.sort((a, b) => (b.flaggedAt || 0) - (a.flaggedAt || 0));
+      allFlags.sort((a, b) => (b.flaggedAt || 0) - (a.flaggedAt || 0));
 
         const rowsHtml = allFlags.map(f => {
         const when = f.flaggedAt ? new Date(f.flaggedAt).toLocaleString() : "—";
@@ -2011,7 +2007,7 @@ function renderOutOfOrderManagement(content) {
         `;
       }).join("");
 
-        content.innerHTML = oversightNote + reorderHtml + requestsSlot + rowsHtml;
+      content.innerHTML = oversightNote + requestsSlot + rowsHtml;
       if (singleSite) attachLiveSupplyRequestsListener(singleSite);
 
       content.querySelectorAll(".assign-select").forEach((select) => {
@@ -2030,7 +2026,6 @@ function renderOutOfOrderManagement(content) {
         });
       });
     });
-    });
   });
 }
 
@@ -2048,10 +2043,8 @@ function renderMaintenanceQueue(content) {
 
   Promise.all([
     db.ref(`sites/${site}/outOfOrder`).once("value"),
-    db.ref("users").once("value"),
-    getReorderRows(site)
-  ]).then(([flagsSnap, usersSnap, orderRows]) => {
-    const reorderHtml = reorderListHtml(orderRows, site);
+    db.ref("users").once("value")
+  ]).then(([flagsSnap, usersSnap]) => {
     const openFlags = [];
     const myFlags = [];
     if (flagsSnap.exists()) {
@@ -2115,7 +2108,6 @@ function renderMaintenanceQueue(content) {
     }).join("");
 
     content.innerHTML = `
-      ${reorderHtml}
       <h4 style="color:var(--navy); margin-bottom:10px;">Open — needs assignment</h4>
       ${openFlagsHtml}
       <h4 style="color:var(--navy); margin:20px 0 10px;">Assigned to me</h4>
