@@ -720,7 +720,7 @@ function renderTabContent(tabId, targetEl) {
 
   if (tabId === "during-event") {
     if (hasRole(currentUser, "user")) {
-      renderStatusReportEntry(content);
+      renderAttendantGroupsLanding(content);
     } else if (hasRole(currentUser, "superadmin") || hasRole(currentUser, "superuser")) {
       renderStatusReportHistory(content);
     } else {
@@ -775,7 +775,7 @@ function getAssignedGroupKeys(site, uid) {
 }
 
 // ===================== OUT-OF-ORDER: USER FLAGS A UNIT =====================
-function renderFlagUnitForm(content) {
+function renderFlagUnitForm(content, filterGroupKey) {
   const site = currentUser.site;
   content.innerHTML = `<div class="card"><p style="color:var(--muted);">Loading units...</p></div>`;
 
@@ -785,10 +785,13 @@ function renderFlagUnitForm(content) {
       return;
     }
     const allUnits = snap.val();
-    const units = Object.fromEntries(Object.entries(allUnits).filter(([, u]) => u.assignedTo && u.assignedTo[currentUser.uid]));
+    let units = Object.fromEntries(Object.entries(allUnits).filter(([, u]) => u.assignedTo && u.assignedTo[currentUser.uid]));
+    if (filterGroupKey) {
+      units = Object.fromEntries(Object.entries(units).filter(([, u]) => u.name.trim().replace(/[.#$/\[\]]/g, "_") === filterGroupKey));
+    }
 
     if (!Object.keys(units).length) {
-      content.innerHTML = `<div class="panel-placeholder">No units are currently assigned to you. Ask your Super User to assign you a unit in the Pre-Event tab.</div>`;
+      content.innerHTML = `<div class="panel-placeholder">No units are currently assigned to you${filterGroupKey ? " at this location" : ""}. Ask your Super User to assign you a unit in the Pre-Event tab.</div>`;
       return;
     }
 
@@ -862,6 +865,234 @@ const FIXTURE_CHECKS = [
   { key: "soap", label: "Soap", options: ["Good", "Running Low", "Empty"] },
   { key: "floor", label: "Floor Conditions", options: ["Clean", "Needs Attention", "Wet / Hazard"] }
 ];
+
+// ===================== ATTENDANT: UNITS LANDING (mobile-first, tap a location to act on it) =====================
+function renderAttendantGroupsLanding(content) {
+  const site = currentUser.site;
+  content.innerHTML = `<div class="card"><p style="color:var(--muted);">Loading your assigned units...</p></div>`;
+
+  db.ref(`sites/${site}/units`).once("value").then((snap) => {
+    if (!snap.exists()) {
+      content.innerHTML = `<div class="panel-placeholder">No units imported for ${SITES[site]} yet.</div>`;
+      return;
+    }
+    const allUnits = snap.val();
+    const myUnits = Object.entries(allUnits).filter(([, u]) => u.assignedTo && u.assignedTo[currentUser.uid]);
+
+    if (!myUnits.length) {
+      content.innerHTML = `<div class="panel-placeholder">No units are currently assigned to you. Ask your Super User to assign you a unit in the Pre-Event tab.</div>`;
+      return;
+    }
+
+    const groups = {};
+    myUnits.forEach(([key, u]) => {
+      const groupKey = u.name.trim().replace(/[.#$/\[\]]/g, "_");
+      if (!groups[groupKey]) groups[groupKey] = { name: u.name.trim(), units: [] };
+      groups[groupKey].units.push({ key, ...u });
+    });
+
+    const flaggedCounts = {};
+    Object.entries(groups).forEach(([groupKey, g]) => {
+      flaggedCounts[groupKey] = g.units.filter(u => u.status === "outOfOrder").length;
+    });
+
+    content.innerHTML = `
+      <h3 style="color:var(--navy); margin-bottom:12px;">Your locations — ${SITES[site]}</h3>
+      <div id="attendant-groups-list"></div>
+    `;
+    const list = document.getElementById("attendant-groups-list");
+
+    Object.entries(groups).forEach(([groupKey, group]) => {
+      const flagged = flaggedCounts[groupKey];
+      const el = document.createElement("div");
+      el.className = "card";
+      el.style.cssText = "margin-bottom:10px; cursor:pointer; display:flex; justify-content:space-between; align-items:center;";
+      el.innerHTML = `
+        <div>
+          <div style="font-weight:700; color:var(--navy);">${group.name}</div>
+          <div style="color:var(--muted); font-size:0.8rem; margin-top:2px;">${group.units.length} unit${group.units.length === 1 ? "" : "s"}</div>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px;">
+          ${flagged ? `<span style="font-size:0.75rem; background:var(--danger); color:white; border-radius:10px; padding:3px 9px;">${flagged} flagged</span>` : ""}
+          <span style="color:var(--muted);">&rsaquo;</span>
+        </div>
+      `;
+      el.addEventListener("click", () => renderAttendantGroupDetail(site, groupKey, group));
+      list.appendChild(el);
+    });
+  });
+}
+
+function renderAttendantGroupDetail(site, groupKey, group) {
+  const content = document.getElementById("main-content");
+  content.innerHTML = `
+    <button class="back-to-groups-btn" style="background:none; border:none; color:var(--muted); cursor:pointer; font-size:0.85rem; margin-bottom:14px; padding:0;">&larr; Back to your locations</button>
+    <h3 style="color:var(--navy); margin-bottom:14px;">${group.name}</h3>
+    <div class="landing-grid" id="attendant-action-grid" style="margin-bottom:20px;"></div>
+    <div id="attendant-action-content"></div>
+  `;
+  content.querySelector(".back-to-groups-btn").addEventListener("click", renderAttendantGroupsLanding);
+
+  const actionGrid = document.getElementById("attendant-action-grid");
+  const actionContent = document.getElementById("attendant-action-content");
+
+  const actions = [
+    { id: "report", label: "Status report", icon: "📋", bg: "#e6f0fb", text: "#2c5f8a" },
+    { id: "flag", label: "Flag a unit", icon: "🔧", bg: "#fbe9e7", text: "var(--danger)" },
+    { id: "supplies", label: "Request supplies", icon: "📦", bg: "#fbf1e0", text: "var(--warn)" }
+  ];
+  actions.forEach((a) => {
+    const el = document.createElement("div");
+    el.className = "landing-tile";
+    el.style.background = a.bg;
+    el.style.color = a.text;
+    el.innerHTML = `<div style="font-size:1.4rem;">${a.icon}</div><div style="font-weight:700; margin-top:6px; font-size:0.85rem;">${a.label}</div>`;
+    el.addEventListener("click", () => {
+      actionGrid.querySelectorAll(".landing-tile").forEach(t => t.style.outline = "none");
+      el.style.outline = "2px solid var(--gold)";
+      if (a.id === "report") renderGroupStatusReportForm(actionContent, site, groupKey, group);
+      if (a.id === "flag") renderFlagUnitForm(actionContent, groupKey);
+      if (a.id === "supplies") renderRequestItemPicker(site, groupKey, group.name, actionContent);
+    });
+    actionGrid.appendChild(el);
+  });
+
+  // Default to the status report view
+  actionGrid.children[0].style.outline = "2px solid var(--gold)";
+  renderGroupStatusReportForm(actionContent, site, groupKey, group);
+}
+
+// Single-location version of the status report — same fields as the original
+// multi-group form, but scoped to one location so it fits the tap-into-a-unit flow.
+function renderGroupStatusReportForm(content, site, groupKey, group) {
+  const reasonOptions = DEFAULT_OOO_REASONS.map(r => `<option value="${r}">${r}</option>`).join("");
+
+  const toiletUnitCheckboxes = group.units.map(u => `
+    <label style="display:block; font-size:0.85rem; margin-bottom:4px; cursor:pointer;">
+      <input type="checkbox" class="toilet-issue-checkbox" value="${u.key}" data-name="${u.name} (${u.type})"> ${u.name} (${u.type})
+    </label>
+  `).join("");
+
+  const fixtureBlocks = FIXTURE_CHECKS.map(f => `
+    <div style="margin-bottom:10px;">
+      <label style="display:block; font-size:0.8rem; color:var(--muted); margin-bottom:4px;">${f.label}</label>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        ${f.options.map((opt, i) => `
+          <label style="cursor:pointer; font-size:0.85rem;">
+            <input type="radio" name="${f.key}-${groupKey}" class="fixture-radio" data-fixture="${f.key}" value="${opt}" ${i === 0 ? "checked" : ""}> ${opt}
+          </label>
+        `).join("")}
+      </div>
+    </div>
+  `).join("");
+
+  content.innerHTML = `
+    <div class="card" data-group-key="${groupKey}">
+      <div style="margin-bottom:14px;">
+        <label style="display:block; font-size:0.8rem; color:var(--muted); margin-bottom:6px;">Toilets</label>
+        <div style="display:flex; gap:16px; margin-bottom:8px;">
+          <label style="cursor:pointer;"><input type="radio" name="toilets-${groupKey}" class="toilets-radio" value="good" checked> All Good</label>
+          <label style="cursor:pointer;"><input type="radio" name="toilets-${groupKey}" class="toilets-radio" value="issues"> Report an Issue</label>
+        </div>
+        <div class="toilets-issue-detail" style="display:none; padding:10px; background:#f4f2ee; border-radius:6px;">
+          <p style="font-size:0.8rem; color:var(--muted); margin-bottom:6px;">Which unit(s)?</p>
+          ${toiletUnitCheckboxes}
+          <label style="display:block; font-size:0.8rem; color:var(--muted); margin:8px 0 4px;">Issue</label>
+          <select class="toilets-reason-select" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; margin-bottom:8px;">
+            ${reasonOptions}
+          </select>
+          <label style="display:block; font-size:0.8rem; color:var(--muted); margin-bottom:4px;">Notes</label>
+          <textarea class="toilets-notes" rows="2" style="width:100%; padding:8px; border:1px solid var(--border); border-radius:6px; font-family:inherit;"></textarea>
+        </div>
+      </div>
+      ${fixtureBlocks}
+      <label style="display:flex; align-items:center; gap:8px; cursor:pointer; margin:14px 0;">
+        <input type="checkbox" id="status-signoff-checkbox" style="width:18px; height:18px;">
+        <span>I have personally checked ${group.name} and the information above is accurate.</span>
+      </label>
+      <button id="status-submit-btn" style="padding:10px 20px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer; font-weight:600;">
+        Submit Status Report
+      </button>
+      <div id="status-submit-status" style="margin-top:12px; font-size:0.85rem;"></div>
+    </div>
+  `;
+
+  const card = content.querySelector(`.card[data-group-key="${groupKey}"]`);
+  const detail = card.querySelector(".toilets-issue-detail");
+  card.querySelectorAll(".toilets-radio").forEach((radio) => {
+    radio.addEventListener("change", () => {
+      detail.style.display = radio.value === "issues" ? "block" : "none";
+    });
+  });
+
+  document.getElementById("status-submit-btn").addEventListener("click", () => {
+    const statusEl = document.getElementById("status-submit-status");
+
+    if (!document.getElementById("status-signoff-checkbox").checked) {
+      statusEl.style.color = "var(--danger)";
+      statusEl.textContent = "Check the sign-off box before submitting.";
+      return;
+    }
+
+    const toiletsStatus = card.querySelector(".toilets-radio:checked").value;
+    const groupReport = { groupName: group.name, toiletsStatus, fixtures: {} };
+    FIXTURE_CHECKS.forEach((f) => {
+      const checked = card.querySelector(`.fixture-radio[data-fixture="${f.key}"]:checked`);
+      groupReport.fixtures[f.key] = checked ? checked.value : f.options[0];
+    });
+
+    const newFlags = [];
+    if (toiletsStatus === "issues") {
+      const checkedUnits = Array.from(card.querySelectorAll(".toilet-issue-checkbox:checked"));
+      const reason = card.querySelector(".toilets-reason-select").value;
+      const notes = card.querySelector(".toilets-notes").value.trim();
+
+      if (!checkedUnits.length) {
+        statusEl.style.color = "var(--danger)";
+        statusEl.textContent = "Select which unit(s) have the issue.";
+        return;
+      }
+      groupReport.toiletIssues = checkedUnits.map(cb => ({ unitKey: cb.value, unitName: cb.dataset.name, reason, notes }));
+      checkedUnits.forEach((cb) => {
+        newFlags.push({ unitKey: cb.value, unitName: cb.dataset.name, reason, notes });
+      });
+    }
+
+    statusEl.style.color = "var(--muted)";
+    statusEl.textContent = "Submitting...";
+
+    const reportRef = db.ref(`sites/${site}/statusReports`).push();
+    const writes = [reportRef.set({
+      submittedByUid: currentUser.uid,
+      submittedByName: `${currentUser.firstName} ${currentUser.lastName}`,
+      timestamp: firebase.database.ServerValue.TIMESTAMP,
+      signedOff: true,
+      groupReports: { [groupKey]: groupReport }
+    })];
+
+    newFlags.forEach((f) => {
+      const flagRef = db.ref(`sites/${site}/outOfOrder`).push();
+      writes.push(flagRef.set({
+        unitKey: f.unitKey, unitName: f.unitName, reason: f.reason, notes: f.notes,
+        flaggedByUid: currentUser.uid,
+        flaggedByName: `${currentUser.firstName} ${currentUser.lastName}`,
+        flaggedAt: firebase.database.ServerValue.TIMESTAMP,
+        status: "open"
+      }));
+      writes.push(db.ref(`sites/${site}/units/${f.unitKey}/status`).set("outOfOrder"));
+    });
+
+    Promise.all(writes).then(() => {
+      statusEl.style.color = "var(--success)";
+      statusEl.textContent = newFlags.length
+        ? `Status report submitted. ${newFlags.length} unit(s) flagged out of order.`
+        : "Status report submitted.";
+    }).catch((err) => {
+      statusEl.style.color = "var(--danger)";
+      statusEl.textContent = "Failed to submit: " + err.message;
+    });
+  });
+}
 
 function renderStatusReportEntry(content) {
   const site = currentUser.site;
@@ -2442,8 +2673,8 @@ function renderSupplyRequestForm(content) {
   });
 }
 
-function renderRequestItemPicker(site, groupKey, groupName) {
-  const panel = document.getElementById("request-items-content");
+function renderRequestItemPicker(site, groupKey, groupName, targetEl) {
+  const panel = targetEl || document.getElementById("request-items-content");
   panel.innerHTML = `<p style="color:var(--muted);">Loading items...</p>`;
 
   Promise.all([
