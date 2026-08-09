@@ -952,6 +952,48 @@ function renderLocationScanGate(container, site, groupKey, groupName, onVerified
 }
 
 // Admin utility: print QR codes for each location so they can be posted on-site.
+// Deterministic per-unit code, distinct from the per-location code above.
+function unitScanCode(site, unitKey) {
+  return `PRIVYCHECK-UNIT::${site}::${unitKey}`;
+}
+
+// Admin utility: print a QR code for every individual unit (not grouped by
+// location), so each physical toilet/stall can be labeled on its own.
+function renderUnitQRCodes(content, site) {
+  content.innerHTML = `<div class="card"><p style="color:var(--muted);">Loading units...</p></div>`;
+  db.ref(`sites/${site}/units`).once("value").then((snap) => {
+    if (!snap.exists()) {
+      content.innerHTML = `<div class="panel-placeholder">No units imported for ${SITES[site]} yet.</div>`;
+      return;
+    }
+    const units = [];
+    snap.forEach((child) => units.push({ key: child.key, ...child.val() }));
+    units.sort((a, b) => a.name.localeCompare(b.name) || a.type.localeCompare(b.type));
+
+    content.innerHTML = `
+      <div class="card" style="margin-bottom:14px;">
+        <h3 style="color:var(--navy); margin-bottom:8px;">Unit codes — ${SITES[site]}</h3>
+        <p style="color:var(--muted); font-size:0.85rem; margin-bottom:10px;">One code per individual unit, for labeling each stall/toilet itself rather than the location as a whole.</p>
+        <button id="print-unit-qr-btn" style="padding:8px 16px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer;">Print all codes</button>
+      </div>
+      <div id="unit-qr-print-grid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(180px, 1fr)); gap:14px;"></div>
+    `;
+    const grid = document.getElementById("unit-qr-print-grid");
+    units.forEach((u) => {
+      const cell = document.createElement("div");
+      cell.className = "card";
+      cell.style.textAlign = "center";
+      cell.innerHTML = `<canvas id="unit-qr-canvas-${u.key}" style="max-width:100%;"></canvas><div style="font-weight:700; margin-top:6px; font-size:0.85rem;">${u.name}</div><div style="color:var(--muted); font-size:0.75rem;">${u.type}</div>`;
+      grid.appendChild(cell);
+      const canvas = cell.querySelector("canvas");
+      if (typeof QRCode !== "undefined") {
+        QRCode.toCanvas(canvas, unitScanCode(site, u.key), { width: 150 }, () => {});
+      }
+    });
+    document.getElementById("print-unit-qr-btn").addEventListener("click", () => window.print());
+  });
+}
+
 function renderLocationQRCodes(content, site) {
   content.innerHTML = `<div class="card"><p style="color:var(--muted);">Loading locations...</p></div>`;
   getLocationGroups(site).then((groups) => {
@@ -3236,6 +3278,21 @@ function renderAdminPanel(content) {
       <div id="qr-codes-panel" style="margin-top:16px;"></div>
     </div>
     <div class="card">
+      <h3 style="color:var(--navy); margin-bottom:14px;">Unit QR Codes</h3>
+      <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">
+        A separate code for each individual unit (stall/toilet), for labeling the unit itself rather than the location as a whole.
+      </p>
+      <label style="display:block; font-size:0.85rem; color:var(--muted); margin-bottom:6px;">Site</label>
+      <select id="unit-qr-site-select" style="padding:8px; border-radius:6px; border:1px solid var(--border); margin-bottom:14px; width:200px;">
+        ${siteOptions}
+      </select>
+      <br>
+      <button id="view-unit-qr-codes-btn" style="padding:10px 18px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer;">
+        View / Print Codes
+      </button>
+      <div id="unit-qr-codes-panel" style="margin-top:16px;"></div>
+    </div>
+    <div class="card">
       <h3 style="color:var(--navy); margin-bottom:14px;">Import Privy Units (CSV)</h3>
       <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">
         CSV columns required: <code>unit_name, location, type</code> (type must be Male, Female, or ADA).
@@ -3549,6 +3606,10 @@ function renderAdminPanel(content) {
 
   document.getElementById("view-qr-codes-btn").addEventListener("click", () => {
     renderLocationQRCodes(document.getElementById("qr-codes-panel"), document.getElementById("qr-site-select").value);
+  });
+
+  document.getElementById("view-unit-qr-codes-btn").addEventListener("click", () => {
+    renderUnitQRCodes(document.getElementById("unit-qr-codes-panel"), document.getElementById("unit-qr-site-select").value);
   });
 
   document.getElementById("csv-template-btn").addEventListener("click", () => {
