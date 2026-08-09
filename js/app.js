@@ -614,11 +614,11 @@ function renderEventOverviewSection() {
 
     const subnavGrid = document.getElementById("event-subnav-grid");
     const subTiles = [
-      { id: "during-event", label: "Status reports", icon: "📋", bg: "#e6f0fb", text: "#2c5f8a" },
       { id: "oor-manage", label: "Out of order", icon: "🔧", bg: "#fbe9e7", text: "var(--danger)", badge: openFlags },
-      { id: "medical-alerts", label: "Medical alerts", icon: "🩹", bg: "#fbf1e0", text: "var(--warn)" },
+      { id: "inventory-requests-sitewide", label: "Inventory requests", icon: "📦", bg: "#fdf1e7", text: "#8a4b0f" },
+      { id: "during-event", label: "Status reports", icon: "📋", bg: "#e6f0fb", text: "#2c5f8a" },
       { id: "closing-history", label: "Closing", icon: "📝", bg: "#efe9fb", text: "#5b3ea6" },
-      { id: "inventory-requests-sitewide", label: "Inventory requests", icon: "📦", bg: "#fdf1e7", text: "#8a4b0f" }
+      { id: "medical-alerts", label: "Medical alerts", icon: "🩹", bg: "#fbf1e0", text: "var(--warn)" }
     ];
     subTiles.forEach((t) => {
       const el = document.createElement("div");
