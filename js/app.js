@@ -1817,6 +1817,90 @@ function renderClosingEntryPanel(content) {
 }
 
 
+// Shared by Inventory Orders, Out of Order Management, and Maintenance Home
+// so the same "items below par" list surfaces everywhere requests get worked,
+// not just buried under the Inventory tile.
+function getReorderRows(site) {
+  return getLocationGroups(site).then((groups) => {
+    const groupKeys = Object.keys(groups);
+    const groupFetches = groupKeys.map(key =>
+      Promise.all([
+        db.ref(`sites/${site}/groupInventory/${key}/Female/items`).once("value"),
+        db.ref(`sites/${site}/groupInventory/${key}/Female/counts`).once("value"),
+        db.ref(`sites/${site}/groupInventory/${key}/Male/items`).once("value"),
+        db.ref(`sites/${site}/groupInventory/${key}/Male/counts`).once("value")
+      ]).then(([femaleItemsSnap, femaleCountsSnap, maleItemsSnap, maleCountsSnap]) =>
+        ({ key, name: groups[key].name, femaleItemsSnap, femaleCountsSnap, maleItemsSnap, maleCountsSnap })
+      )
+    );
+
+    return Promise.all(groupFetches).then((groupResults) => {
+      const orderRows = [];
+
+      function collectOrders(groupKey, groupName, sex, itemsSnap, countsSnap) {
+        if (!itemsSnap.exists()) return;
+        const items = itemsSnap.val();
+        const latestEnding = {};
+        if (countsSnap.exists()) {
+          countsSnap.forEach((child) => {
+            const entry = child.val();
+            if (entry.type === "ending") {
+              Object.entries(entry.counts || {}).forEach(([itemKey, c]) => { latestEnding[itemKey] = c.count; });
+            }
+          });
+        }
+        Object.entries(items).forEach(([itemKey, item]) => {
+          const ending = latestEnding[itemKey];
+          const orderQty = ending !== undefined ? Math.max(0, item.parLevel - ending) : null;
+          if (orderQty !== null && orderQty > 0) {
+            orderRows.push({ groupKey, groupName, sex, itemKey, itemName: item.name, parLevel: item.parLevel, ending, orderQty });
+          }
+        });
+      }
+
+      groupResults.forEach(({ key, name, femaleItemsSnap, femaleCountsSnap, maleItemsSnap, maleCountsSnap }) => {
+        collectOrders(key, name, "Female", femaleItemsSnap, femaleCountsSnap);
+        collectOrders(key, name, "Male", maleItemsSnap, maleCountsSnap);
+      });
+
+      return orderRows;
+    });
+  });
+}
+
+function reorderListHtml(orderRows, site) {
+  if (!orderRows.length) return "";
+  return `
+    <div class="card">
+      <h3 style="color:var(--navy); margin-bottom:14px;">Reorder List — ${SITES[site]}</h3>
+      <table style="width:100%; border-collapse:collapse; font-size:0.85rem;">
+        <thead>
+          <tr style="text-align:left; color:var(--muted);">
+            <th style="padding:8px; border-bottom:2px solid var(--border);">Location Group</th>
+            <th style="padding:8px; border-bottom:2px solid var(--border);">Sex</th>
+            <th style="padding:8px; border-bottom:2px solid var(--border);">Item</th>
+            <th style="padding:8px; border-bottom:2px solid var(--border);">Par</th>
+            <th style="padding:8px; border-bottom:2px solid var(--border);">Ending</th>
+            <th style="padding:8px; border-bottom:2px solid var(--border);">Order Qty</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${orderRows.map(r => `
+            <tr>
+              <td style="padding:8px; border-bottom:1px solid var(--border);">${r.groupName}</td>
+              <td style="padding:8px; border-bottom:1px solid var(--border);">${r.sex}</td>
+              <td style="padding:8px; border-bottom:1px solid var(--border);">${r.itemName}</td>
+              <td style="padding:8px; border-bottom:1px solid var(--border);">${r.parLevel}</td>
+              <td style="padding:8px; border-bottom:1px solid var(--border);">${r.ending}</td>
+              <td style="padding:8px; border-bottom:1px solid var(--border); font-weight:600; color:var(--danger);">${r.orderQty}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
 function renderOutOfOrderManagement(content) {
   const topSelector = document.getElementById("site-selector");
   const selectedSite = topSelector.value;
@@ -1850,16 +1934,20 @@ function renderOutOfOrderManagement(content) {
 
       const singleSite = sitesToShow.length === 1 ? sitesToShow[0] : null;
       const requestsSlot = singleSite ? supplyRequestsSlotHtml() : "";
+      const reorderPromise = singleSite ? getReorderRows(singleSite) : Promise.resolve([]);
 
-      if (!allFlags.length) {
-        content.innerHTML = oversightNote + (requestsSlot || `<div class="panel-placeholder">No out-of-order reports for ${sitesToShow.length > 1 ? "any site" : SITES[sitesToShow[0]]} right now.</div>`);
-        if (singleSite) attachLiveSupplyRequestsListener(singleSite);
-        return;
-      }
+      reorderPromise.then((orderRows) => {
+        const reorderHtml = singleSite ? reorderListHtml(orderRows, singleSite) : "";
 
-      allFlags.sort((a, b) => (b.flaggedAt || 0) - (a.flaggedAt || 0));
+        if (!allFlags.length) {
+          content.innerHTML = oversightNote + reorderHtml + (requestsSlot || `<div class="panel-placeholder">No out-of-order reports for ${sitesToShow.length > 1 ? "any site" : SITES[sitesToShow[0]]} right now.</div>`);
+          if (singleSite) attachLiveSupplyRequestsListener(singleSite);
+          return;
+        }
 
-      const rowsHtml = allFlags.map(f => {
+        allFlags.sort((a, b) => (b.flaggedAt || 0) - (a.flaggedAt || 0));
+
+        const rowsHtml = allFlags.map(f => {
         const when = f.flaggedAt ? new Date(f.flaggedAt).toLocaleString() : "—";
         const techs = maintenanceBySite[f.site] || [];
         const techOptions = `<option value="">Unassigned</option>` + techs.map(t =>
@@ -1897,7 +1985,7 @@ function renderOutOfOrderManagement(content) {
         `;
       }).join("");
 
-      content.innerHTML = oversightNote + requestsSlot + rowsHtml;
+        content.innerHTML = oversightNote + reorderHtml + requestsSlot + rowsHtml;
       if (singleSite) attachLiveSupplyRequestsListener(singleSite);
 
       content.querySelectorAll(".assign-select").forEach((select) => {
@@ -1916,6 +2004,7 @@ function renderOutOfOrderManagement(content) {
         });
       });
     });
+    });
   });
 }
 
@@ -1933,8 +2022,10 @@ function renderMaintenanceQueue(content) {
 
   Promise.all([
     db.ref(`sites/${site}/outOfOrder`).once("value"),
-    db.ref("users").once("value")
-  ]).then(([flagsSnap, usersSnap]) => {
+    db.ref("users").once("value"),
+    getReorderRows(site)
+  ]).then(([flagsSnap, usersSnap, orderRows]) => {
+    const reorderHtml = reorderListHtml(orderRows, site);
     const openFlags = [];
     const myFlags = [];
     if (flagsSnap.exists()) {
@@ -1998,6 +2089,7 @@ function renderMaintenanceQueue(content) {
     }).join("");
 
     content.innerHTML = `
+      ${reorderHtml}
       <h4 style="color:var(--navy); margin-bottom:10px;">Open — needs assignment</h4>
       ${openFlagsHtml}
       <h4 style="color:var(--navy); margin:20px 0 10px;">Assigned to me</h4>
@@ -3076,96 +3168,30 @@ function renderInventoryOrders(content) {
   const site = currentUser.site;
   content.innerHTML = `<div class="card"><p style="color:var(--muted);">Loading orders...</p></div>`;
 
-  getLocationGroups(site).then((groups) => {
-    const groupKeys = Object.keys(groups);
-    const groupFetches = groupKeys.map(key =>
-      Promise.all([
-        db.ref(`sites/${site}/groupInventory/${key}/Female/items`).once("value"),
-        db.ref(`sites/${site}/groupInventory/${key}/Female/counts`).once("value"),
-        db.ref(`sites/${site}/groupInventory/${key}/Male/items`).once("value"),
-        db.ref(`sites/${site}/groupInventory/${key}/Male/counts`).once("value")
-      ]).then(([femaleItemsSnap, femaleCountsSnap, maleItemsSnap, maleCountsSnap]) =>
-        ({ key, name: groups[key].name, femaleItemsSnap, femaleCountsSnap, maleItemsSnap, maleCountsSnap })
-      )
-    );
-
-    Promise.all(groupFetches).then((groupResults) => {
-      const orderRows = [];
-
-      function collectOrders(groupKey, groupName, sex, itemsSnap, countsSnap) {
-        if (!itemsSnap.exists()) return;
-        const items = itemsSnap.val();
-        const latestEnding = {};
-        if (countsSnap.exists()) {
-          countsSnap.forEach((child) => {
-            const entry = child.val();
-            if (entry.type === "ending") {
-              Object.entries(entry.counts || {}).forEach(([itemKey, c]) => { latestEnding[itemKey] = c.count; });
-            }
-          });
-        }
-        Object.entries(items).forEach(([itemKey, item]) => {
-          const ending = latestEnding[itemKey];
-          const orderQty = ending !== undefined ? Math.max(0, item.parLevel - ending) : null;
-          if (orderQty !== null && orderQty > 0) {
-            orderRows.push({ groupKey, groupName, sex, itemKey, itemName: item.name, parLevel: item.parLevel, ending, orderQty });
-          }
-        });
-      }
-
-      groupResults.forEach(({ key, name, femaleItemsSnap, femaleCountsSnap, maleItemsSnap, maleCountsSnap }) => {
-        collectOrders(key, name, "Female", femaleItemsSnap, femaleCountsSnap);
-        collectOrders(key, name, "Male", maleItemsSnap, maleCountsSnap);
-      });
-
-      const requestsSlot = supplyRequestsSlotHtml();
-
-      const ordersHtml = orderRows.length ? `
+  getReorderRows(site).then((orderRows) => {
+    const requestsSlot = supplyRequestsSlotHtml();
+    const ordersHtml = orderRows.length
+      ? reorderListHtml(orderRows, site) + `
         <div class="card">
-          <h3 style="color:var(--navy); margin-bottom:14px;">Reorder List — ${SITES[site]}</h3>
-          <table style="width:100%; border-collapse:collapse; font-size:0.85rem;">
-            <thead>
-              <tr style="text-align:left; color:var(--muted);">
-                <th style="padding:8px; border-bottom:2px solid var(--border);">Location Group</th>
-                <th style="padding:8px; border-bottom:2px solid var(--border);">Sex</th>
-                <th style="padding:8px; border-bottom:2px solid var(--border);">Item</th>
-                <th style="padding:8px; border-bottom:2px solid var(--border);">Par</th>
-                <th style="padding:8px; border-bottom:2px solid var(--border);">Ending</th>
-                <th style="padding:8px; border-bottom:2px solid var(--border);">Order Qty</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${orderRows.map(r => `
-                <tr>
-                  <td style="padding:8px; border-bottom:1px solid var(--border);">${r.groupName}</td>
-                  <td style="padding:8px; border-bottom:1px solid var(--border);">${r.sex}</td>
-                  <td style="padding:8px; border-bottom:1px solid var(--border);">${r.itemName}</td>
-                  <td style="padding:8px; border-bottom:1px solid var(--border);">${r.parLevel}</td>
-                  <td style="padding:8px; border-bottom:1px solid var(--border);">${r.ending}</td>
-                  <td style="padding:8px; border-bottom:1px solid var(--border); font-weight:600; color:var(--danger);">${r.orderQty}</td>
-                </tr>
-              `).join("")}
-            </tbody>
-          </table>
-          <button id="email-order-btn" style="margin-top:14px; padding:10px 20px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer;">
+          <button id="email-order-btn" style="padding:10px 20px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer;">
             Email This Order
           </button>
         </div>
-      ` : `<div class="panel-placeholder">No items currently below par for ${SITES[site]}.</div>`;
+      `
+      : `<div class="panel-placeholder">No items currently below par for ${SITES[site]}.</div>`;
 
-      content.innerHTML = requestsSlot + ordersHtml;
-      attachLiveSupplyRequestsListener(site);
+    content.innerHTML = requestsSlot + ordersHtml;
+    attachLiveSupplyRequestsListener(site);
 
-      const emailBtn = document.getElementById("email-order-btn");
-      if (emailBtn) {
-        emailBtn.addEventListener("click", () => {
-          const bodyLines = orderRows.map(r => `${r.groupName} (${r.sex}) — ${r.itemName}: order ${r.orderQty} cases (par ${r.parLevel}, ending ${r.ending})`);
-          const subject = encodeURIComponent(`Privy Check Order — ${SITES[site]}`);
-          const body = encodeURIComponent(`Order needed for ${SITES[site]}:\n\n${bodyLines.join("\n")}`);
-          window.location.href = `mailto:?subject=${subject}&body=${body}`;
-        });
-      }
-    });
+    const emailBtn = document.getElementById("email-order-btn");
+    if (emailBtn) {
+      emailBtn.addEventListener("click", () => {
+        const bodyLines = orderRows.map(r => `${r.groupName} (${r.sex}) — ${r.itemName}: order ${r.orderQty} cases (par ${r.parLevel}, ending ${r.ending})`);
+        const subject = encodeURIComponent(`Privy Check Order — ${SITES[site]}`);
+        const body = encodeURIComponent(`Order needed for ${SITES[site]}:\n\n${bodyLines.join("\n")}`);
+        window.location.href = `mailto:?subject=${subject}&body=${body}`;
+      });
+    }
   });
 }
 
