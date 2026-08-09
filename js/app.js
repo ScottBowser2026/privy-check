@@ -3302,6 +3302,10 @@ function renderAdminPanel(content) {
       <p style="color:var(--muted); font-size:0.85rem; margin-bottom:14px;">
         Upload a spreadsheet in the standard Order Guide format (one sheet per location, "Womens"/"Mens" sections listing item name and Par). You'll map each sheet to an existing location group before anything is saved — sheet names don't have to match exactly.
       </p>
+      <button id="inventory-template-btn" style="padding:8px 14px; background:none; border:1px solid var(--navy); color:var(--navy); border-radius:6px; cursor:pointer; margin-bottom:14px;">
+        Download blank inventory template (CSV)
+      </button>
+      <br>
       <input type="file" id="order-guide-file-input" accept=".xlsx,.xls" style="margin-bottom:14px;">
       <br>
       <button id="order-guide-parse-btn" style="padding:10px 18px; background:var(--navy); color:white; border:none; border-radius:6px; cursor:pointer;">
@@ -3560,6 +3564,19 @@ function renderAdminPanel(content) {
           statusEl.textContent = "Failed to add: " + err.message;
         });
     });
+  });
+
+  document.getElementById("inventory-template-btn").addEventListener("click", () => {
+    const inventoryCsvContent = "location,sex,item_name,par_level\nKing Loo,Female,Toilet Paper,60\nKing Loo,Female,Hand Soap,24\nKing Loo,Male,Toilet Paper,60\n";
+    const blob = new Blob([inventoryCsvContent], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "privy-check-inventory-template.csv";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   });
 
   document.getElementById("csv-template-btn").addEventListener("click", () => {
