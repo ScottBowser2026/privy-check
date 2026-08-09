@@ -658,7 +658,8 @@ function renderInventoryRequestsSitewide(content) {
   content.innerHTML = `<div class="card"><p style="color:var(--muted);">Loading inventory requests...</p></div>`;
 
   getReorderRows(site).then((rows) => {
-    content.innerHTML = reorderListHtml(rows, site);
+    content.innerHTML = reorderListHtml(rows, site) + supplyRequestsSlotHtml();
+    attachLiveSupplyRequestsListener(site);
   });
 }
 
@@ -1983,11 +1984,9 @@ function renderOutOfOrderManagement(content) {
       });
 
       const singleSite = sitesToShow.length === 1 ? sitesToShow[0] : null;
-      const requestsSlot = singleSite ? supplyRequestsSlotHtml() : "";
 
       if (!allFlags.length) {
-        content.innerHTML = oversightNote + (requestsSlot || `<div class="panel-placeholder">No out-of-order reports for ${sitesToShow.length > 1 ? "any site" : SITES[sitesToShow[0]]} right now.</div>`);
-        if (singleSite) attachLiveSupplyRequestsListener(singleSite);
+        content.innerHTML = oversightNote + `<div class="panel-placeholder">No out-of-order reports for ${sitesToShow.length > 1 ? "any site" : SITES[sitesToShow[0]]} right now.</div>`;
         return;
       }
 
@@ -2031,8 +2030,7 @@ function renderOutOfOrderManagement(content) {
         `;
       }).join("");
 
-      content.innerHTML = oversightNote + requestsSlot + rowsHtml;
-      if (singleSite) attachLiveSupplyRequestsListener(singleSite);
+      content.innerHTML = oversightNote + rowsHtml;
 
       content.querySelectorAll(".assign-select").forEach((select) => {
         select.addEventListener("change", () => {
